@@ -65,6 +65,20 @@ The PR is looked up again when the branch changes, when the space becomes the ac
 
 Clicks, right-click menu, drag to reorder, machine headers, worktrees nested under their checkout and the narrow rail (under 160px: numbers with the status cell) behave as in the shipped `spaces` mod.
 
+Hover cards (`cards.js`): resting 600ms on a part opens a 320px card below it (`popover` background, 1px `border`, radius 8, 12px text); it closes 300ms after the pointer leaves both. Clicks inside a card stop there, so the row under it doesn't select or drag. Long agent lists scroll inside the card past 280px.
+
+| Part | Card | Actions |
+|---|---|---|
+| PR | `#n title`, state, `head → base`, author and last update, checks (✓ pass, ✗ fail, ◌ pending), latest reviews, requested reviewers, conflicts | Open on GitHub, Copy URL |
+| Branch | last commit (subject, author, age), upstream with ↑↓, uncommitted file count | Copy branch |
+| Diff | file count, the 5 files that changed most with `+/−`, what it is compared against | Open Changes (after a space switch it waits 300ms for the `tabs` mod to restore that space's panel, then opens Changes) |
+| Bot count | each live sub-agent: program icon, name, status word and age, what it reports | click a line: `agent.focus` |
+| Status | the space's agents, most urgent first, same lines | click a line: `agent.focus` |
+| Space name | folder, machine, tabs, agents, last change | Copy folder |
+| Machine header | connection, spaces, agents | — |
+
+Sub-agent names, statuses and the tree follow the shipped `agents` mod (`clean`, `kidStatus`, `parent` links), so a card says what that list says.
+
 ## Built from
 
 - `themes/quiet-dark.json`, `themes/quiet-light.json`: the palette above, with the panel colors in `colors`.

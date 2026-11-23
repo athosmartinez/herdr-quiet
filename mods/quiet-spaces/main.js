@@ -7,22 +7,33 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, readTextFile, appHome } from "herdr";
+import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, clean, kidStatus } from "./cards.js";
 
 // Live sub-agents per space: each live terminal with a parent is walked up to
 // its first ancestor that is an agent in a space (the same `parent` links the
 // agents list draws as a tree). `all`: terminals(); `top`: agents().
+// Returns { space id: [terminal, ...] }.
 export function subAgents(all, top) {
   const parent = new Map(all.map((k) => [k.address, k.parent ?? null]));
   const spaceOf = new Map(top.map((a) => [a.address, a.space]));
-  const counts = {};
+  const kids = {};
   for (const k of all) {
     if (!k.parent || k.state !== "live") continue;
     let at = k.parent;
     for (let hops = 0; at && !spaceOf.has(at) && hops < 32; hops++) at = parent.get(at) ?? null;
     const space = at ? spaceOf.get(at) : null;
-    if (space) counts[space] = (counts[space] ?? 0) + 1;
+    if (space) (kids[space] ??= []).push(k);
   }
-  return counts;
+  return kids;
+}
+
+// What an agent says it is doing: its own report, else its cleaned title when
+// that says more than its name.
+function said(k, name) {
+  const r = k.report;
+  const text = typeof r === "string" ? r : r?.message ?? r?.summary ?? r?.title ?? "";
+  const title = clean(k.title);
+  return clean(text) || (title && title !== name ? title : "");
 }
 
 function find(node, id) {
@@ -90,10 +101,16 @@ export function statusGlyph(t, status) {
   return cell(div());
 }
 
-// "3 files changed, 82 insertions(+), 14 deletions(-)" -> { add: 82, del: 14 }
-export function shortstat(text) {
-  const n = (re) => Number(text.match(re)?.[1] ?? 0);
-  return { add: n(/(\d+) insertion/), del: n(/(\d+) deletion/) };
+// `git diff --numstat` ("82\t14\tpath", "-\t-\tbinary") -> the totals, the file
+// count and the `top` files that changed most (binary files count as 0 lines).
+export function numstat(text, top = 5) {
+  const files = text.split("\n").filter(Boolean).map((line) => {
+    const [a, d, ...rest] = line.split("\t");
+    return { path: rest.join("\t"), add: a === "-" ? null : Number(a), del: d === "-" ? null : Number(d) };
+  });
+  const sum = (k) => files.reduce((s, f) => s + (f[k] ?? 0), 0);
+  const size = (f) => (f.add ?? 0) + (f.del ?? 0);
+  return { add: sum("add"), del: sum("del"), count: files.length, files: [...files].sort((x, y) => size(y) - size(x)).slice(0, top) };
 }
 
 // The pull request's look: an icon, a short word and a theme color.
@@ -316,7 +333,24 @@ export default class Spaces extends View {
       const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
       const pr = branch.code === 0 ? await this.lookPr(key, info.branch, on, cwd) : null;
       info.pr = pr;
-      info.diff = await this.diff(pr, on, cwd);
+      // For the branch card: the last commit, the upstream's name and how many
+      // files are not committed. Failures leave the field out of the card.
+      // Two at a time, as above: AT_ONCE places x 2 runs stays under a machine
+      // core's 16 running execs.
+      const [diff, log] = await Promise.all([
+        this.diff(pr, on, cwd),
+        exec("git", ["log", "-1", "--format=%s%x1f%an%x1f%ct"], { cwd, on, timeout: 10000 }).catch(() => null),
+      ]);
+      const [up, dirty] = await Promise.all([
+        exec("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd, on, timeout: 10000 }).catch(() => null),
+        // --untracked-files=all: a new folder counts as its files, not as one entry.
+        exec("git", ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"], { cwd, on, timeout: 15000 }).catch(() => null),
+      ]);
+      info.diff = diff;
+      const [subject, author, at] = log?.code === 0 ? log.stdout.trim().split("\x1f") : [];
+      info.commit = subject ? { subject, author, at: Number(at) } : null;
+      info.upstream = up?.code === 0 ? up.stdout.trim() : null;
+      info.dirty = dirty?.code === 0 ? dirty.stdout.split("\n").filter(Boolean).length : null;
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -335,7 +369,7 @@ export default class Spaces extends View {
     this.prAt[k] = Date.now();
     let pr = null;
     try {
-      const fields = "number,state,isDraft,reviewDecision,baseRefName,headRefName";
+      const fields = "number,state,isDraft,reviewDecision,baseRefName,headRefName,title,author,url,updatedAt,mergeable,statusCheckRollup,latestReviews,reviewRequests";
       const account = await this.ghAccount(on, cwd);
       // gh answers with its active account. A repo whose owner maps to another
       // logged-in account gets that account's token for this one call only:
@@ -346,7 +380,12 @@ export default class Spaces extends View {
       if (r.code === 0) {
         const j = JSON.parse(r.stdout);
         // gh can answer with a PR from another branch of the same name on a fork: keep only ours.
-        if (j.headRefName === branch) pr = { number: j.number, state: j.state, draft: j.isDraft, review: j.reviewDecision || null, base: j.baseRefName };
+        if (j.headRefName === branch) pr = {
+          number: j.number, state: j.state, draft: j.isDraft, review: j.reviewDecision || null, base: j.baseRefName, head: j.headRefName,
+          // For the PR card.
+          title: j.title, author: j.author?.login ?? null, url: j.url, updatedAt: j.updatedAt, mergeable: j.mergeable,
+          checks: j.statusCheckRollup ?? [], reviews: j.latestReviews ?? [], requested: j.reviewRequests ?? [],
+        };
       }
     } catch {}
     for (const p of Object.keys(this.pr)) if (JSON.parse(p)[0] === key && p !== k) { delete this.pr[p]; delete this.prAt[p]; }
@@ -385,10 +424,10 @@ export default class Spaces extends View {
     // --no-optional-locks: a plain diff may rewrite .git/index, which the repo
     // watch sees as a change and answers with another look, in a loop.
     const range = pr && pr.state === "OPEN" ? [`origin/${pr.base}...HEAD`] : ["HEAD"];
-    const args = ["--no-optional-locks", "diff", "--shortstat", ...range];
+    const args = ["--no-optional-locks", "diff", "--numstat", ...range];
     try {
       const r = await exec("git", args, { cwd, on, timeout: 15000 });
-      return r.code === 0 ? shortstat(r.stdout) : null;
+      return r.code === 0 ? numstat(r.stdout) : null;
     } catch { return null; }
   }
 
@@ -539,7 +578,13 @@ export default class Spaces extends View {
             .text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover(s => s.bg(t.hover))
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copiedLogin = login; cx.notify(); })
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
-      const items = [cell(head), ...guidance, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
+      const ids = new Set(mine.map((r) => r.w.id));
+      const headCard = collapsed ? head : hover(`machine-card-${m ?? "local"}`, head, machineCard(t, `machine-card-${m ?? "local"}`, m, {
+        state: !m ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " "),
+        spaces: mine.length,
+        agents: (this.agentList ?? []).filter((a) => ids.has(a.space)).length,
+      }));
+      const items = [cell(headCard), ...guidance, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
       const first = folded ? -1 : mine.findIndex(r => r.w.active);
       if (first >= 0) this.activeAt = before + 1 + guidance.length + first;
       before += items.length;
@@ -567,25 +612,54 @@ export default class Spaces extends View {
   // Line 2: an icon before each value, so each one says what it is:
   // [branch] name  [PR] #124 approved \u2192 dev  [diff] +82 \u221214.
   // The branch gives way first; the PR and the diff stay whole.
-  detail(g, t) {
+  // A terminal as a card line, named as the agents list names a sub-agent.
+  agentRow(k, status) {
+    const name = k.name || k.template || k.program?.name || k.address;
+    return { address: k.address, name, status, since: k.status_ms ?? null, report: said(k, name), program: k.program };
+  }
+
+  // The space's agents, most urgent first, as card lines.
+  spaceAgents(spaceId) {
+    const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
+    return (this.agentList ?? []).filter((a) => a.space === spaceId)
+      .sort((x, y) => (RANK[y.status] ?? 0) - (RANK[x.status] ?? 0))
+      .map((a) => {
+        const k = this.terms?.get(a.address) ?? { address: a.address, program: a.program, title: a.title };
+        const row = this.agentRow({ ...k, name: k.name || a.tab_name }, a.status);
+        return row;
+      });
+  }
+
+  spaceInfo(w) {
+    const changed = Math.max(0, ...(w.tabs ?? []).map((c) => c.changed_at ?? 0));
+    return {
+      folder: place(w, this.paneList ?? []),
+      agents: (this.agentList ?? []).filter((a) => a.space === w.id).length,
+      changed: changed || null,
+    };
+  }
+
+  // Each part opens its own card on hover.
+  detail(g, t, w) {
     const icon = (name, color) => svg(ICON(name)).size(13).flex_none().text_color(color);
     const pr = g.pr;
     const look = pr && prLook(t, pr);
     const diff = g.diff && (g.diff.add || g.diff.del) ? g.diff : null;
     const part = () => h_flex().flex_none().gap(4).items_center();
+    const branch = h_flex().min_w(0).gap(4).items_center()
+      .child(icon("git-branch", t.dim))
+      .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
     return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0)
-      .child(h_flex().flex_initial().min_w(0).gap(4).items_center()
-        .child(icon("git-branch", t.dim))
-        .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached")))
-      .when(Boolean(pr), (el) => el.child(part()
+      .child(hover(`branch-card-${w.id}`, branch, branchCard(t, `branch-card-${w.id}`, g, ICON("git-branch"))).flex_initial().min_w(0))
+      .when(Boolean(pr), (el) => el.child(hover(`pr-card-${w.id}`, part()
         .child(icon(look.icon, look.color))
         .child(div().text_color(t.muted).child(`#${pr.number}`))
         .child(div().text_color(look.color).child(look.word))
-        .child(div().child(`\u2192 ${pr.base}`))))
-      .when(Boolean(diff), (el) => el.child(part()
+        .child(div().child(`\u2192 ${pr.base}`)), prCard(t, `pr-card-${w.id}`, pr, look, ICON(look.icon))).flex_none()))
+      .when(Boolean(diff), (el) => el.child(hover(`diff-card-${w.id}`, part()
         .child(icon("file-diff", t.dim))
         .child(div().text_color(t.done).child(`+${diff.add}`))
-        .child(div().text_color(t.ansi1).child(`\u2212${diff.del}`))));
+        .child(div().text_color(t.ansi1).child(`\u2212${diff.del}`)), diffCard(t, `diff-card-${w.id}`, g, ICON("file-diff"), w.id, w.active)).flex_none()));
   }
 
   row({ w, i, g, tree }, t) {
@@ -596,6 +670,7 @@ export default class Spaces extends View {
     const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
     // The name's left edge: line 2 starts under it (avatar or worktree mark, then the gap).
     const indent = tree ? 22 + 13 + 9 : 18 + 9;
+    const kids = (this.subs?.[w.id] ?? []).map((k) => this.agentRow(k, kidStatus(k, this.listed)));
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -644,17 +719,18 @@ export default class Spaces extends View {
           // Herdr's own identity: the space's colored letter, or the worktree mark.
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
-          .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(on ? t.foreground : t.muted).child(w.name))
+          .child(hover(`space-card-${w.id}`, div().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(w.name),
+            spaceCard(t, `space-card-${w.id}`, w, this.spaceInfo(w))).flex_initial().min_w(SIDE_MIN))
           .child(g ? this.repoTail(g, tree, w.name, t) : div().flex_1())
           // Live sub-agents started by this space's agents, wherever they run.
-          .when((this.subs?.[w.id] ?? 0) > 0, el => el.child(h_flex().id(`subs-${w.id}`).flex_none().gap(4).items_center()
-            .text_size(11.5).text_color(t.muted).tooltip(`${this.subs[w.id]} sub-agent${this.subs[w.id] === 1 ? "" : "s"} running`)
+          .when(kids.length > 0, el => el.child(hover(`subs-card-${w.id}`, h_flex().flex_none().gap(4).items_center()
+            .text_size(11.5).text_color(t.muted)
             .child(svg(ICON("bot")).size(13).flex_none().text_color(t.dim))
-            .child(String(this.subs[w.id]))))
+            .child(String(kids.length)), subsCard(t, `subs-card-${w.id}`, kids, statusGlyph, ICON("bot"))).flex_none()))
           // Status on the right, where the agents list shows it too.
-          .child(statusGlyph(t, w.status)),
+          .child(hover(`status-card-${w.id}`, statusGlyph(t, w.status), statusCard(t, `status-card-${w.id}`, this.spaceAgents(w.id), statusGlyph)).flex_none()),
       )
-      .when(Boolean(g), (el) => el.child(div().pl(indent).min_w(0).child(this.detail(g, t))));
+      .when(Boolean(g), (el) => el.child(div().pl(indent).min_w(0).child(this.detail(g, t, w))));
   }
 
   compact({ w, i }, t) {
@@ -688,7 +764,13 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    this.subs = subAgents(terminals(), agents());
+    // Read once per render, for the rows and their cards.
+    const all = terminals();
+    this.agentList = agents();
+    this.paneList = panes();
+    this.terms = new Map(all.map((k) => [k.address, k]));
+    this.listed = new Map(this.agentList.map((a) => [a.address, a.status]));
+    this.subs = subAgents(all, this.agentList);
     const list = this.grouped(t, collapsed);
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;
