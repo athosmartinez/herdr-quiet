@@ -12,20 +12,29 @@ import { READ, parseRead, providerState } from "../mods/quiet-status/usage.js";
 const NOW = Date.parse("2030-01-01T12:00:00Z");
 const S = NOW / 1000;
 
+const account = (id, label, tag, rest) => ({ id, name: id, label: label ?? id, tag: tag ?? null, ...rest });
+
 const LIST = {
   claude: {
     active: "work",
     accounts: [
-      { name: "default", home: "/home/u/.claude", email: "a@example.com", logged_in: true, account_id: null },
-      { name: "work", home: "/home/u/.local/share/agent-accounts/claude/work", email: "b@example.com", logged_in: true, account_id: null },
-      { name: "spare", home: "/home/u/.local/share/agent-accounts/claude/spare", email: null, logged_in: false, account_id: null },
+      account("default", "alice", "personal", { home: "/home/u/.claude", email: "a@example.com", logged_in: true, account_id: null }),
+      account("work", "bob", "work", { home: "/home/u/.local/share/agent-accounts/claude/work", email: "b@example.com", logged_in: true, account_id: null }),
+      account("spare", null, null, { home: "/home/u/.local/share/agent-accounts/claude/spare", email: null, logged_in: false, account_id: null }),
     ],
   },
   codex: {
     active: "default",
     accounts: [
-      { name: "default", home: "/home/u/.codex", email: "a@example.com", logged_in: true, account_id: "acct-a", plan: "plus" },
-      { name: "team", home: "/home/u/.local/share/agent-accounts/codex/team", email: "c@example.com", logged_in: true, account_id: "acct-b", plan: "pro" },
+      account("default", "alice", "personal", { home: "/home/u/.codex", email: "a@example.com", logged_in: true, account_id: "acct-a", plan: "plus" }),
+      account("team", "carol", "work", { home: "/home/u/.local/share/agent-accounts/codex/team", email: "c@example.com", logged_in: true, account_id: "acct-b", plan: "pro" }),
+    ],
+  },
+  cursor: {
+    active: "default",
+    accounts: [
+      account("default", "alice", "personal", { home: "/home/u/.cursor", email: null, logged_in: null, account_id: null }),
+      account("ci", null, "work", { home: "/home/u/.local/share/agent-accounts/cursor/ci", email: null, logged_in: false, account_id: null }),
     ],
   },
 };
@@ -79,18 +88,18 @@ test("providerState names the active account and lists all when there are severa
   ].join("\n"), NOW);
 
   const c = providerState(p, "claude");
-  assert.equal(c.name, "work");
+  assert.equal(c.label, "bob");
   assert.equal(c.reading.windows[0].used, 55);
-  assert.deepEqual(c.accounts.map((a) => [a.name, a.active, a.loggedIn, Boolean(a.reading)]), [
-    ["default", false, true, true],
-    ["work", true, true, true],
-    ["spare", false, false, false],
+  assert.deepEqual(c.accounts.map((a) => [a.id, a.label, a.tag, a.active, a.loggedIn, Boolean(a.reading)]), [
+    ["default", "alice", "personal", false, true, true],
+    ["work", "bob", "work", true, true, true],
+    ["spare", "spare", null, false, false, false],
   ]);
 
   const x = providerState(p, "codex");
-  assert.equal(x.name, "default");
+  assert.equal(x.label, "alice"); // the label, never "default"
   assert.equal(x.reading.windows[0].used, 5); // acct-a, not the newer acct-b
-  assert.equal(x.accounts.find((a) => a.name === "team").reading.windows[0].used, 30);
+  assert.equal(x.accounts.find((a) => a.id === "team").reading.windows[0].used, 30);
 });
 
 test("an unknown active name falls back to default", () => {
@@ -98,8 +107,30 @@ test("an unknown active name falls back to default", () => {
   list.claude.active = "gone";
   const p = parseRead(`accounts\t${JSON.stringify(list)}\nclaude\tdefault\t${claudeFile(10, 20)}`, NOW);
   const c = providerState(p, "claude");
-  assert.equal(c.name, "default");
+  assert.equal(c.label, "alice");
+  assert.equal(c.accounts.find((a) => a.active).id, "default");
   assert.equal(c.reading.windows[0].used, 10);
+});
+
+test("an account without label or tag: the label is its id", () => {
+  const list = { claude: { active: "x", accounts: [{ name: "default" }, { id: "x", name: "x", label: "", tag: "" }] } };
+  const c = providerState(parseRead(`accounts\t${JSON.stringify(list)}`, NOW), "claude");
+  assert.equal(c.label, "x");
+  assert.deepEqual(c.accounts.map((a) => [a.id, a.label, a.tag]), [["default", "default", null], ["x", "x", null]]);
+});
+
+test("Cursor: accounts without gauges; one account shows nothing", () => {
+  const p = parseRead(`accounts\t${JSON.stringify(LIST)}\ncodex\tacct-a\t${limits(5, 6)}`, NOW);
+  const k = providerState(p, "cursor");
+  assert.equal(k.reading, null);
+  assert.equal(k.label, "alice");
+  assert.deepEqual(k.accounts.map((a) => [a.id, a.tag, a.loggedIn, a.reading]), [
+    ["default", "personal", true, null], // logged_in null: unknown, still selectable
+    ["ci", "work", false, null],
+  ]);
+  const one = { cursor: { active: "default", accounts: [account("default", "alice", null, { logged_in: true })] } };
+  assert.equal(providerState(parseRead(`accounts\t${JSON.stringify(one)}`, NOW), "cursor"), null);
+  assert.equal(providerState(parseRead("", NOW), "cursor"), null);
 });
 
 test("several accounts and no reading still show, so the card can switch", () => {
@@ -115,7 +146,7 @@ test("without agent-account: one unnamed reading, as before", () => {
     `codex\tacct-a\t${limits(5, 6, 120)}`,
   ].join("\n"), NOW);
   const c = providerState(p, "claude");
-  assert.equal(c.name, null);
+  assert.equal(c.label, null);
   assert.deepEqual(c.accounts, []);
   assert.equal(c.reading.windows[0].used, 10);
   assert.equal(providerState(p, "codex").reading.windows[0].used, 30); // the newest
@@ -132,7 +163,7 @@ test("one account: every reading on the machine is its own", () => {
   const list = { codex: { active: "default", accounts: [{ name: "default", email: null, logged_in: true, account_id: null }] } };
   const p = parseRead(`accounts\t${JSON.stringify(list)}\ncodex\t\t${limits(7, 8)}`, NOW);
   const x = providerState(p, "codex");
-  assert.equal(x.name, null);
+  assert.equal(x.label, null);
   assert.equal(x.reading.windows[0].used, 7);
 });
 
@@ -172,7 +203,7 @@ test("the READ script reads a fake home: accounts, Claude files, newest Codex re
     assert.equal(providerState(p, "claude").reading.windows[0].used, 55);
     const x = providerState(p, "codex");
     assert.equal(x.reading.windows[0].used, 5);
-    assert.equal(x.accounts.find((a) => a.name === "team").reading.windows[0].used, 30);
+    assert.equal(x.accounts.find((a) => a.id === "team").reading.windows[0].used, 30);
 
     // Without agent-account on PATH, the same files still give one reading each.
     const plain = execFileSync("sh", ["-c", READ], { env: { ...env, PATH: "/usr/bin:/bin" }, encoding: "utf8" });

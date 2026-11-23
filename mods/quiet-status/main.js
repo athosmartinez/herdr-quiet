@@ -12,10 +12,18 @@ import { READ, STALE_MS, parseRead, providerState, pace, level, runway } from ".
 
 const READ_MS = 60000;
 
+// `limits: false`: the agent saves no usage limits, so the bar has no gauges
+// for it, only its accounts.
 const PROVIDERS = [
-  { key: "claude", name: "Claude" },
-  { key: "codex", name: "Codex" },
+  { key: "claude", name: "Claude", limits: true },
+  { key: "codex", name: "Codex", limits: true },
+  { key: "cursor", name: "Cursor", limits: false },
 ];
+
+// What a not-logged-in account needs: a login for Claude and Codex; for
+// Cursor, `add` prints the command that saves the account's API key.
+const loginCommand = (provider, id) =>
+  provider.key === "cursor" ? `agent-account add cursor ${id}` : `agent-account login ${provider.key} ${id}`;
 
 // "5h", "7d": a window named by its length, not by its slot, because a plan
 // can have only the weekly one.
@@ -102,23 +110,23 @@ export default class QuietStatus extends View {
     });
   }
 
-  // Makes `name` the account that new sessions of `provider` use on the bar's
-  // machine. Running sessions keep theirs.
-  use(provider, name, cx) {
+  // Makes account `a` the one that new sessions of `provider` use on the
+  // bar's machine. Running sessions keep theirs.
+  use(provider, a, cx) {
     const machine = this.machine;
     cx.spawn(async (cx) => {
       let r;
       try {
-        r = await exec("agent-account", ["use", provider.key, name], { on: machine || null, timeout: 10000 });
+        r = await exec("agent-account", ["use", provider.key, a.id], { on: machine || null, timeout: 10000 });
       } catch (e) {
         r = { code: -1, stdout: "", stderr: String(e?.message ?? e) };
       }
       if (r.code === 0) {
         const list = this.usage[machine]?.accounts?.[provider.key];
-        if (list) list.active = name;
-        notify({ title: `${provider.name}: new sessions use ${name}`, body: "Running sessions keep their account.", level: "success", timeout: 5000 });
+        if (list) list.active = a.id;
+        notify({ title: `${provider.name}: new sessions use ${a.label}`, body: "Running sessions keep their account.", level: "success", timeout: 5000 });
       } else {
-        notify({ title: `${provider.name}: could not switch to ${name}`, body: firstLine(r.stderr) || firstLine(r.stdout) || `agent-account exited with ${r.code}`, level: "error" });
+        notify({ title: `${provider.name}: could not switch to ${a.label}`, body: firstLine(r.stderr) || firstLine(r.stdout) || `agent-account exited with ${r.code}`, level: "error" });
       }
       cx.notify();
       this.read(machine, cx, true);
@@ -155,39 +163,44 @@ export default class QuietStatus extends View {
     });
   }
 
-  // One provider in the bar: its icon, the active account's name when there
+  // One provider in the bar: its icon, the active account's label when there
   // are several, then "5h 12%  7d 78%".
   gauge(t, provider, s, now) {
     const u = s.reading;
-    const stale = !u || (u.at != null && now - u.at > STALE_MS);
+    const stale = provider.limits && (!u || (u.at != null && now - u.at > STALE_MS));
     const trigger = h_flex().id(`usage-${provider.key}`).gap(8).items_center().cursor_default()
       .child(this.icon(provider, 13, stale ? t.dim : t.muted))
-      .when(Boolean(s.name), (el) => el.child(div().text_color(t.muted).child(s.name)))
+      .when(Boolean(s.label), (el) => el.child(div().text_color(t.muted).child(s.label)))
       .when(Boolean(u), (el) => el.children(this.values(t, u, now)))
-      .when(!u, (el) => el.child(div().text_color(t.dim).child("–")));
+      .when(!u && provider.limits, (el) => el.child(div().text_color(t.dim).child("–")));
     return HoverCard.new(`usage-card-${provider.key}`).open_delay(600).close_delay(300).anchor("bottom_left")
       .trigger(trigger).content(this.card(t, provider, s, now));
   }
 
-  // One account in the card: a check on the active one, its name and email,
-  // its last readings and how old they are. A click on another logged-in
-  // account makes it the one that new sessions use.
+  // One account in the card: a check on the active one, its label, tag and
+  // email, its last readings and how old they are. A click on another
+  // logged-in account makes it the one that new sessions use.
   account(t, provider, a, now) {
     const pick = !a.active && a.loggedIn;
     const u = a.reading;
-    const note = !a.loggedIn ? `not logged in · agent-account login ${provider.key} ${a.name}`
+    const note = !a.loggedIn ? `not logged in · ${loginCommand(provider, a.id)}`
+      : !provider.limits ? ""
       : !u ? "no reading yet"
       : u.at ? `updated ${ago(now - u.at)}` : "";
-    return v_flex().id(`account-${provider.key}-${a.name}`).px(6).py(4).gap(2).rounded(5).min_w(0)
+    // The email only when the label doesn't already say it.
+    const email = a.email && a.email !== a.label ? a.email : "";
+    return v_flex().id(`account-${provider.key}-${a.id}`).px(6).py(4).gap(2).rounded(5).min_w(0)
       .when(pick, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click((_e, cx) => { cx.stop_propagation(); this.use(provider, a.name, cx); }))
+        .on_click((_e, cx) => { cx.stop_propagation(); this.use(provider, a, cx); }))
       .child(h_flex().gap(6).items_center().min_w(0)
         .child(div().w(14).flex_none().when(a.active, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(12).text_color(t.foreground))))
-        .child(div().flex_none().font_medium().text_color(a.loggedIn ? t.foreground : t.muted).child(a.name))
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(a.email ?? ""))
+        .child(div().flex_none().max_w(140).truncate().font_medium().text_color(a.loggedIn ? t.foreground : t.muted).child(a.label))
+        .when(Boolean(a.tag), (el) => el.child(div().flex_none().h(16).px(5).rounded(4).bg(t.selected).text_size(10.5)
+          .text_color(t.muted).flex().items_center().max_w(80).truncate().child(a.tag)))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(email))
         .when(Boolean(u), (el) => el.child(h_flex().flex_none().gap(8).items_center().text_size(11.5).children(this.values(t, u, now)))))
-      .when(Boolean(note), (el) => el.child(div().id(`account-note-${provider.key}-${a.name}`).pl(20).min_w(0).truncate()
+      .when(Boolean(note), (el) => el.child(div().id(`account-note-${provider.key}-${a.id}`).pl(20).min_w(0).truncate()
         .text_size(11).text_color(t.dim).tooltip(note).child(note)));
   }
 
@@ -198,7 +211,8 @@ export default class QuietStatus extends View {
       .child(div().flex_1().min_w(0).truncate().text_color(color ?? t.foreground).child(value));
     const section = (label) => v_flex().pt(4).gap(2).child(div().text_size(11.5).font_medium().text_color(t.muted).child(label));
     const rows = [];
-    if (!u) rows.push(div().text_size(11).text_color(t.dim).child("No reading yet for this account."));
+    if (!u && provider.limits) rows.push(div().text_size(11).text_color(t.dim).child("No reading yet for this account."));
+    if (!provider.limits) rows.push(div().text_size(11).text_color(t.dim).child(`${provider.name} saves no usage limits, so there are no gauges.`));
     for (const w of u?.windows ?? []) {
       rows.push(section(windowWord(w.min)));
       if (w.used == null) {
@@ -222,7 +236,8 @@ export default class QuietStatus extends View {
       rows.push(v_flex().children(s.accounts.map((a) => this.account(t, provider, a, now))));
       rows.push(div().text_size(11).text_color(t.dim).child("Click an account to use it in new sessions."));
     }
-    const title = s.name ? `${provider.name} usage limits · ${s.name}` : `${provider.name} usage limits`;
+    const what = provider.limits ? `${provider.name} usage limits` : `${provider.name} accounts`;
+    const title = s.label ? `${what} · ${s.label}` : what;
     return v_flex().w(s.accounts.length ? 340 : 280).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_sm()
       .text_size(12).text_color(t.foreground)
       .child(h_flex().gap(6).pb(2).items_center().min_w(0)

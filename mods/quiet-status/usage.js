@@ -105,40 +105,48 @@ function newest(readings) {
   return readings.filter(Boolean).sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0] ?? null;
 }
 
-// What the bar shows for one provider ("claude" | "codex"), or null for
-// nothing: { reading, name, accounts }.
-// - `reading`: the active account's last reading, or null;
-// - `name`: the active account's name, only when there are several;
+// What the bar shows for one provider ("claude" | "codex" | "cursor"), or
+// null for nothing: { reading, label, accounts }.
+// - `reading`: the active account's last reading, or null (always for
+//   Cursor, which saves no usage limits);
+// - `label`: the active account's label, only when there are several;
 // - `accounts`: every account, only when there are several, each
-//   { name, email, loggedIn, active, reading }.
-// Without `agent-account` there is one unnamed reading, the newest one.
+//   { id, label, tag, email, loggedIn, active, reading }. `id` is what
+//   `agent-account use` takes; `label` is for people and falls back to it.
+// Without `agent-account` there is one unlabeled reading, the newest one.
 export function providerState(parsed, key) {
   const list = parsed?.accounts?.[key];
   const fallback = key === "claude"
     ? claudeReading(parsed, "default") ?? newest(Object.values(parsed?.claude ?? {}))
-    : parsed?.codex?.[0]?.reading ?? null;
+    : key === "codex" ? parsed?.codex?.[0]?.reading ?? null : null;
   if (!Array.isArray(list?.accounts) || list.accounts.length === 0) {
-    return fallback ? { reading: fallback, name: null, accounts: [] } : null;
+    return fallback ? { reading: fallback, label: null, accounts: [] } : null;
   }
-  const names = list.accounts.map((a) => a.name);
-  const activeName = names.includes(list.active) ? list.active : "default";
-  const readingOf = (a) => key === "claude"
-    ? claudeReading(parsed, a.name)
-    : (a.account_id && (parsed.codex ?? []).find((c) => c.id === a.account_id)?.reading) || null;
-  const accounts = list.accounts.map((a) => ({
-    name: a.name,
-    email: a.email ?? null,
-    loggedIn: a.logged_in !== false,
-    active: a.name === activeName,
-    reading: readingOf(a),
-  }));
+  const idOf = (a) => a.id ?? a.name;
+  const ids = list.accounts.map(idOf);
+  const activeId = ids.includes(list.active) ? list.active : "default";
+  const readingOf = (id, a) => key === "claude" ? claudeReading(parsed, id)
+    : key === "codex" ? (a.account_id && (parsed.codex ?? []).find((c) => c.id === a.account_id)?.reading) || null
+    : null;
+  const accounts = list.accounts.map((a) => {
+    const id = idOf(a);
+    return {
+      id,
+      label: a.label || id,
+      tag: a.tag || null,
+      email: a.email ?? null,
+      loggedIn: a.logged_in !== false,
+      active: id === activeId,
+      reading: readingOf(id, a),
+    };
+  });
   if (accounts.length === 1) {
     // One account: every reading on the machine is its own.
     const reading = accounts[0].reading ?? fallback;
-    return reading ? { reading, name: null, accounts: [] } : null;
+    return reading ? { reading, label: null, accounts: [] } : null;
   }
   const active = accounts.find((a) => a.active) ?? accounts[0];
-  return { reading: active.reading, name: active.name, accounts };
+  return { reading: active.reading, label: active.label, accounts };
 }
 
 // How far the spending runs ahead of the clock, in points of percent: 0 is on
