@@ -37,7 +37,8 @@ Palette (`themes/quiet-dark.json`, `themes/quiet-light.json`), dark / light:
 | hover / selected | `#1d1d1d` / `#242424` | `#f4f4f5` / `#ececef` |
 | border / input | `#1e1e1e` / `#252525` | `#e4e4e7` / `#d4d4d8` |
 | foreground / muted / dim | `#f5f5f5` / `#a3a3a3` / `#8b8b8b` | `#18181b` / `#52525b` / `#696973` |
-| accent (= solid) | `#346bf1` | `#1b4ed8` |
+| accent / accent_foreground | `#608bfa` / `#050505` | `#1b4ed8` / `#ffffff` |
+| solid / solid_foreground | `#346bf1` / `#ffffff` | `#1b4ed8` / `#ffffff` |
 | selection / cursor | `#13244c` / `#b4cbff` | `#dbe4ff` / `#3f3f46` |
 | working / blocked / done / idle | `#6cb5d8` / `#e9c348` / `#64d1a6` / `#666666` | `#0369a1` / `#b45309` / `#047857` / `#8a8a93` |
 
