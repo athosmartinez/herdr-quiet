@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, writeGhAccounts, validGhName, firstLine,
+  parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, validGhName, firstLine,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -164,19 +164,31 @@ test("readGhAccounts keeps only valid owner → login pairs", () => {
   assert.equal(readGhAccounts("[1]").ok, false);
 });
 
-test("writeGhAccounts changes only gh_accounts and keeps the other keys", () => {
-  const before = JSON.stringify({ stall_minutes: 20, gh_accounts: { old: "me" }, trackers: { "*": { pattern: "x-\\d+" } } });
-  const after = JSON.parse(writeGhAccounts(before, { "my-co": "work-me" }));
+test("editGhAccounts changes one pair and keeps every other key and pair", () => {
+  const before = JSON.stringify({ stall_minutes: 20, gh_accounts: { old: "me", my_org: "hand-written" }, trackers: { "*": { pattern: "x-\\d+" } } });
+  const after = JSON.parse(editGhAccounts(before, { owner: "my-co", login: "work-me" }));
   assert.deepEqual(Object.keys(after), ["stall_minutes", "gh_accounts", "trackers"]);
-  assert.deepEqual(after.gh_accounts, { "my-co": "work-me" });
+  // A pair the panel can't show ("my_org") stays as it was written.
+  assert.deepEqual(after.gh_accounts, { old: "me", my_org: "hand-written", "my-co": "work-me" });
   assert.deepEqual(after.trackers, { "*": { pattern: "x-\\d+" } });
+  // Edit: the edited key goes, the new one comes; unmap removes only that key.
+  assert.deepEqual(JSON.parse(editGhAccounts(before, { from: "old", owner: "new", login: "me" })).gh_accounts, { my_org: "hand-written", new: "me" });
+  assert.deepEqual(JSON.parse(editGhAccounts(before, { from: "old" })).gh_accounts, { my_org: "hand-written" });
   // No file yet: only the map. An empty map drops the key.
-  assert.deepEqual(JSON.parse(writeGhAccounts(null, { a: "b" })), { gh_accounts: { a: "b" } });
-  assert.deepEqual(JSON.parse(writeGhAccounts(before, {})), { stall_minutes: 20, trackers: { "*": { pattern: "x-\\d+" } } });
-  assert.ok(writeGhAccounts(null, { a: "b" }).endsWith("}\n"));
-  // A broken file is never overwritten.
-  assert.throws(() => writeGhAccounts("{ broken", { a: "b" }), /not valid JSON/);
-  assert.throws(() => writeGhAccounts(null, { "a b": "c" }), /owner/);
+  assert.deepEqual(JSON.parse(editGhAccounts(null, { owner: "a", login: "b" })), { gh_accounts: { a: "b" } });
+  assert.deepEqual(JSON.parse(editGhAccounts(JSON.stringify({ gate: true, gh_accounts: { a: "b" } }), { from: "a" })), { gate: true });
+  assert.ok(editGhAccounts(null, { owner: "a", login: "b" }).endsWith("}\n"));
+  // A broken file, or a gh_accounts that is not an object, is never overwritten.
+  assert.throws(() => editGhAccounts("{ broken", { owner: "a", login: "b" }), /not valid JSON/);
+  assert.throws(() => editGhAccounts(JSON.stringify({ gh_accounts: "x" }), { owner: "a", login: "b" }), /not an object/);
+  assert.throws(() => editGhAccounts(null, { owner: "a b", login: "c" }), /owner/);
+  assert.throws(() => editGhAccounts(null, { owner: "a", login: "c d" }), /login/);
+});
+
+test("editGhAccounts saves the owner in lowercase, as quiet-spaces looks it up", () => {
+  const out = JSON.parse(editGhAccounts(JSON.stringify({ gh_accounts: { "My-Company": "old-me", other: "x" } }), { owner: "My-Company", login: "work-me" }));
+  // The mixed-case key would win over the lowercase one in quiet-spaces: it goes.
+  assert.deepEqual(out.gh_accounts, { other: "x", "my-company": "work-me" });
 });
 
 test("validGhName and firstLine", () => {

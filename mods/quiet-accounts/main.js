@@ -9,7 +9,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
   parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, writeGhAccounts, validGhName, firstLine,
+  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, validGhName, firstLine,
 } from "./accounts.js";
 
 // A login runs in its own terminal: read again while the panel is open, so
@@ -213,29 +213,26 @@ export default class QuietAccounts extends View {
 
   // --- GitHub accounts ----------------------------------------------------
 
+  // The owner is saved in lowercase (editGhAccounts), as quiet-spaces looks it up.
   saveMap(f, cx) {
     const owner = this.value("owner").trim();
     const login = this.value("login").trim();
     if (!validGhName(owner)) return this.fail("Owner: the GitHub user or organization in the repo's origin", cx);
     if (!validGhName(login)) return this.fail("Account: a gh login (letters, digits and -)", cx);
-    const map = { ...this.config.map };
-    if (f.owner && f.owner !== owner) delete map[f.owner];
-    map[owner] = login;
-    this.writeMap(map, cx);
+    this.writeMap({ from: f.owner, owner, login }, cx);
   }
 
   unmap(owner, cx) {
-    const map = { ...this.config.map };
-    delete map[owner];
-    this.writeMap(map, cx);
+    this.writeMap({ from: owner }, cx);
   }
 
-  // Writes quiet.json only if it is still the text read, so an edit made in
-  // the meantime (by hand or by another window) is never lost.
-  writeMap(map, cx) {
+  // One change to gh_accounts; the other pairs stay as written. Writes
+  // quiet.json only if it is still the text read, so an edit made in the
+  // meantime (by hand or by another window) is never lost.
+  writeMap(change, cx) {
     if (this.busy) return;
     let next;
-    try { next = writeGhAccounts(this.config.text, map); } catch (e) {
+    try { next = editGhAccounts(this.config.text, change); } catch (e) {
       if (this.form) return this.fail(String(e?.message ?? e), cx);
       notify({ title: "quiet.json not changed", body: String(e?.message ?? e), level: "error" });
       return;

@@ -136,35 +136,54 @@ export function ghStatusFromText(code, stdout, stderr) {
   return { error: firstLine(stderr) || firstLine(stdout) || `gh exited with ${code}` };
 }
 
+// quiet.json as an object, or an error: { ok, j } | { ok: false, error }.
+function parseConfig(fileText) {
+  if (!fileText || !fileText.trim()) return { ok: true, j: {} };
+  let j;
+  try { j = JSON.parse(fileText); } catch (e) { return { ok: false, error: `quiet.json is not valid JSON: ${firstLine(e?.message)}` }; }
+  if (!isObject(j)) return { ok: false, error: "quiet.json is not a JSON object" };
+  if (j.gh_accounts !== undefined && !isObject(j.gh_accounts)) return { ok: false, error: "gh_accounts in quiet.json is not an object" };
+  return { ok: true, j };
+}
+
 // The `gh_accounts` map of quiet.json ({ "<owner>": "<gh login>" }), only its
 // valid pairs. { ok: false } when the file is not a JSON object: the panel
 // then shows the error and never writes over it.
 export function readGhAccounts(fileText) {
-  if (!fileText || !fileText.trim()) return { ok: true, map: {} };
-  let j;
-  try { j = JSON.parse(fileText); } catch (e) { return { ok: false, error: `quiet.json is not valid JSON: ${firstLine(e?.message)}` }; }
-  if (!isObject(j)) return { ok: false, error: "quiet.json is not a JSON object" };
+  const c = parseConfig(fileText);
+  if (!c.ok) return { ok: false, error: c.error };
   const map = {};
-  for (const [owner, login] of Object.entries(isObject(j.gh_accounts) ? j.gh_accounts : {})) {
+  for (const [owner, login] of Object.entries(c.j.gh_accounts ?? {})) {
     if (validGhName(owner) && typeof login === "string" && validGhName(login)) map[owner] = login;
   }
   return { ok: true, map };
 }
 
-// quiet.json with `gh_accounts` set to `map` and every other key kept as it
-// was (and in its place). An empty map removes the key. Throws on a broken
-// file or an invalid pair, so nothing is written then.
-export function writeGhAccounts(fileText, map) {
-  for (const [owner, login] of Object.entries(map)) {
-    if (!validGhName(owner)) throw new Error(`"${owner}" is not a GitHub owner name`);
+// quiet.json with one change to `gh_accounts`, every other key and every
+// other pair kept as written (also pairs the panel doesn't show). `from`: the
+// key the form edited, removed; `owner` and `login`: the pair to set, or no
+// owner to only remove `from`. The owner is saved in lowercase, because
+// quiet-spaces looks up the owner of the origin URL as written, then in
+// lowercase; other keys that differ only in case are removed, so an old one
+// can't win. An empty map removes the key. Throws on a broken file or an
+// invalid pair, so nothing is written then.
+export function editGhAccounts(fileText, { from = null, owner = null, login = null }) {
+  const key = owner == null ? null : owner.trim().toLowerCase();
+  if (key != null) {
+    if (!validGhName(key)) throw new Error(`"${owner}" is not a GitHub owner name`);
     if (!validGhName(login)) throw new Error(`"${login}" is not a GitHub login`);
   }
-  let j = {};
-  if (fileText && fileText.trim()) {
-    try { j = JSON.parse(fileText); } catch (e) { throw new Error(`quiet.json is not valid JSON: ${firstLine(e?.message)}`); }
-    if (!isObject(j)) throw new Error("quiet.json is not a JSON object");
+  const c = parseConfig(fileText);
+  if (!c.ok) throw new Error(c.error);
+  const j = c.j;
+  const map = { ...(j.gh_accounts ?? {}) };
+  if (from != null) delete map[from];
+  if (key != null) {
+    for (const k of Object.keys(map)) if (k.toLowerCase() === key) delete map[k];
+    map[key] = login;
   }
-  if (Object.keys(map).length) j.gh_accounts = { ...map };
+  if (Object.keys(map).length) j.gh_accounts = map;
   else delete j.gh_accounts;
   return `${JSON.stringify(j, null, 2)}\n`;
 }
+
