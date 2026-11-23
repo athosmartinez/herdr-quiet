@@ -279,6 +279,9 @@ export default class QuietAccounts extends View {
         this.readConfig(cx);
         return fail(`${configError("written", e)}. It is read again: try once more.`, cx);
       }
+      // The file now holds `next`: a second change before readConfig ends
+      // compares against it, not the old text.
+      this.config = { text: next, ...readGhAccounts(next) };
       this.busy = false;
       if (this.form?.kind === "map") this.closeForm(cx);
       this.readConfig(cx);
