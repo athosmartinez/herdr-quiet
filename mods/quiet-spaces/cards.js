@@ -257,28 +257,28 @@ export function statusCard(t, id, list, statusGlyph) {
     .child(scrollList(id, list.map((a, i) => agentLine(t, `${id}-a${i}`, a, statusGlyph, () => run("agent.focus", { terminal: a.address })))));
 }
 
-// Every agent waiting for the person: who, where, since when, and the end of
-// its screen, where the tool asks its question. Open shows the agent; Peek
-// looks at its terminal over the current tab. Nothing is approved from here:
-// the answer is given in the agent's own terminal.
-export function needsCard(t, id, list, statusGlyph) {
-  const mono = (text) => div().font_family("JetBrains Mono").text_size(11).text_color(t.muted).truncate().child(text.replace(/ /g, " "));
-  return card(t, 460)
+// Every agent waiting for the person, in brief: who, where, and one line of
+// what it asks. The row under the card already takes the person to the next
+// one on click, so the card is for reading; a click on a line goes to that
+// agent. Nothing is approved from here: the answer is given in the agent's
+// own terminal. `next`: the address the row's next click opens.
+export function needsCard(t, id, list, statusGlyph, next) {
+  return card(t, 400)
     .child(heading(t, null, `${list.length} agent${list.length === 1 ? "" : "s"} waiting for you`))
-    .child(scrollList(id, list.map((a, i) => v_flex().gap(4).p(8).rounded(6).bg(t.surface).border_1().border_color(t.border)
+    .child(div().text_size(11).text_color(t.dim).child("Click the row to go to the next one."))
+    .child(scrollList(id, list.map((a, i) => v_flex().id(`${id}-a${i}`).gap(2).px(6).py(4).rounded(6).cursor_pointer()
+      .when(a.address === next, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); run("agent.focus", { terminal: a.address }); })
       .child(h_flex().gap(6).items_center().min_w(0)
         .child(statusGlyph(t, "blocked"))
         .child(div().flex_1().min_w(0).truncate().font_semibold().child(a.name))
+        .when(a.address === next, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.blocked).child("next")))
         .when(Boolean(a.model), (el) => el.child(div().flex_none().px(4).rounded(4).bg(t.raised).font_family("JetBrains Mono").text_size(10.5)
           .text_color(t.muted).child(a.model.effort ? `${a.model.model}·${a.model.effort}` : a.model.model)))
-        .when(Boolean(a.space), (el) => el.child(div().flex_none().max_w(140).truncate().text_size(11).text_color(t.dim).child(a.space))))
-      .child(a.prompt && a.prompt.length
-        ? v_flex().gap(0).p(6).rounded(4).bg(t.background).children(a.prompt.map((line) => mono(line)))
-        : div().text_size(11).text_color(t.dim).child("Reading its screen…"))
-      .child(actions(
-        button(t, `${id}-open${i}`, "Open", () => run("agent.focus", { terminal: a.address })),
-        button(t, `${id}-peek${i}`, "Peek", () => run("terminal.peek", { terminal: a.address })),
-      ))), 420));
+        .when(Boolean(a.space), (el) => el.child(div().flex_none().max_w(120).truncate().text_size(11).text_color(t.dim).child(a.space))))
+      .child(div().pl(22).text_size(11).text_color(t.muted).truncate().child(a.ask ?? "Reading its screen…")))));
 }
 
 export function spaceCard(t, id, s, info) {

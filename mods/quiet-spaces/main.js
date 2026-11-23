@@ -58,6 +58,18 @@ export function modelOf(argv) {
   return { model: short, effort: effort ? effort.replace(/["']/g, "") : null };
 }
 
+// One line that says what a blocked agent asks, from its screen tail: the line
+// after "requires confirmation" (a hook's reason) or after a tool header
+// ("Bash command", "Edit file"), else the line before "Do you want to proceed?".
+export function askLine(tail) {
+  if (!Array.isArray(tail) || !tail.length) return null;
+  const bare = tail.map((l) => l.replace(/^[\s│┃|]+/, "").trim());
+  let i = bare.findIndex((l) => /requires confirmation|^(Bash command|Edit file|Write file|Read file|Fetch)\b/i.test(l));
+  if (i >= 0 && bare[i + 1]) return bare[i + 1];
+  i = bare.findIndex((l) => /do you want to/i.test(l));
+  return i > 0 ? bare[i - 1] : bare[bare.length - 1];
+}
+
 // What an agent says it is doing: its own report, else its cleaned title when
 // that says more than its name.
 function said(k, name) {
@@ -717,7 +729,7 @@ export default class Spaces extends View {
       const status = this.listed.has(k.address) ? this.listed.get(k.address) : kidStatus(k, this.listed);
       if (status !== "blocked") continue;
       const space = agentSpace.get(k.address) ?? spaceOfKid.get(k.address) ?? null;
-      out.push({ ...this.agentRow(k, "blocked"), space: space ? spaceName.get(space) ?? null : null, prompt: this.prompts?.[k.address] ?? null });
+      out.push({ ...this.agentRow(k, "blocked"), space: space ? spaceName.get(space) ?? null : null, ask: askLine(this.prompts?.[k.address]) });
     }
     // Look at their screens on a timer, never here.
     this.blockedNow = out.map((a) => a.address);
@@ -943,11 +955,25 @@ export default class Spaces extends View {
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       // Every agent waiting for you, in any space or machine, behind one row.
-      .when(needs.length > 0 && !collapsed, (el) => el.child(div().px(8).pb(4).child(hover("needs-card",
-        h_flex().h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.blocked).cursor_pointer()
-          .child(statusGlyph(t, "blocked"))
-          .child(div().flex_1().child(`${needs.length} need${needs.length === 1 ? "s" : ""} you`)),
-        needsCard(t, "needs-card", needs, statusGlyph)).w_full())))
+      // A click goes straight to the next one (each click moves along the
+      // queue); resting on it shows who waits, where, and for what.
+      .when(needs.length > 0 && !collapsed, (el) => {
+        const next = needs[(this.needsAt ?? 0) % needs.length];
+        return el.child(div().px(8).pb(4).child(hover("needs-card",
+          h_flex().id("needs-row").h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.blocked)
+            .cursor_pointer().hover((s) => s.bg(t.blocked + "33"))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              run("agent.focus", { terminal: next.address });
+              this.needsAt = ((this.needsAt ?? 0) + 1) % needs.length;
+              cx.notify();
+            })
+            .child(statusGlyph(t, "blocked"))
+            .child(div().flex_none().child(`${needs.length} need${needs.length === 1 ? "s" : ""} you`))
+            .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(`→ ${next.name}`)),
+          needsCard(t, "needs-card", needs, statusGlyph, next.address)).w_full()));
+      })
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
