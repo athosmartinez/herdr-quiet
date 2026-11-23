@@ -1,28 +1,16 @@
 // The status bar of the Quiet layout: Herdr's `workspace-status`, plus how
 // much of each logged-in agent's usage limit is spent, for the machine the
 // bar names. Color appears only when a limit is spent faster than its window
-// passes, as in a burn-down chart.
+// passes, as in a burn-down chart. With terminal-tools' `agent-account`, the
+// hover card lists every account of an agent and picks the one that new
+// sessions use.
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, HoverCard } from "gpui-base";
-import { spaces, agents, theme, run, window, keys, exec, knownAgents } from "herdr";
+import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify } from "herdr";
+import { READ, STALE_MS, parseRead, providerState, pace, level, runway } from "./usage.js";
 
 const READ_MS = 60000;
-// A Claude reading comes from its statusline, which runs only while a session
-// draws. Older than this, the numbers show dim: they may have moved since.
-const STALE_MS = 30 * 60000;
-
-// One shell call per machine: the Claude statusline's cache, then the last
-// rate-limit event in the newest Codex sessions. Only the file tails are read,
-// because a long session file grows to many megabytes.
-const READ = `
-c="\${XDG_CACHE_HOME:-$HOME/.cache}/claude-usage/rate-limits.json"
-if [ -r "$c" ]; then printf 'claude\\t'; tr -d '\\n' < "$c"; echo; fi
-for f in $(ls -t "\${CODEX_HOME:-$HOME/.codex}"/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -n 5); do
-  l=$(tail -c 400000 "$f" | grep '"rate_limits":{' | tail -n 1)
-  if [ -n "$l" ]; then printf 'codex\\t%s\\n' "$l"; break; fi
-done
-`;
 
 const PROVIDERS = [
   { key: "claude", name: "Claude" },
@@ -63,86 +51,14 @@ function tokens(n) {
   return String(n);
 }
 
-// { min, used, resets } with `resets` in ms. A window whose reset time has
-// passed is kept with `used: null`: its percent belonged to the old window.
-function limit(min, used, resetsAt, now) {
-  if (!Number.isFinite(used)) return null;
-  const resets = Number.isFinite(resetsAt) ? resetsAt * 1000 : null;
-  return { min, used: resets && resets <= now ? null : used, resets };
-}
-
-export function parseClaude(text, now) {
-  const j = JSON.parse(text);
-  const r = j?.rate_limits;
-  if (!r) return null;
-  const windows = [
-    r.five_hour && limit(300, Number(r.five_hour.used_percentage), Number(r.five_hour.resets_at), now),
-    r.seven_day && limit(10080, Number(r.seven_day.used_percentage), Number(r.seven_day.resets_at), now),
-  ].filter(Boolean);
-  const at = Number(j.captured_at) * 1000;
-  return windows.length ? { windows, at: Number.isFinite(at) ? at : null } : null;
-}
-
-export function parseCodex(text, now) {
-  const j = JSON.parse(text);
-  const r = j?.payload?.rate_limits;
-  if (!r) return null;
-  const windows = [r.primary, r.secondary]
-    .filter((w) => w && Number.isFinite(Number(w.window_minutes)))
-    .map((w) => limit(Number(w.window_minutes), Number(w.used_percent), Number(w.resets_at), now))
-    .filter(Boolean)
-    .sort((a, b) => a.min - b.min);
-  const at = Date.parse(j.timestamp);
-  const total = j.payload.info?.total_token_usage?.total_tokens;
-  return windows.length ? { windows, at: Number.isFinite(at) ? at : null, plan: r.plan_type ?? null, sessionTokens: Number(total) } : null;
-}
-
-export function parseRead(stdout, now) {
-  const out = {};
-  for (const line of (stdout ?? "").split("\n")) {
-    const tab = line.indexOf("\t");
-    if (tab < 0) continue;
-    const key = line.slice(0, tab);
-    try {
-      if (key === "claude") out.claude = parseClaude(line.slice(tab + 1), now);
-      if (key === "codex") out.codex = parseCodex(line.slice(tab + 1), now);
-    } catch {}
-  }
-  return out;
-}
-
-// How far the spending runs ahead of the clock, in points of percent: 0 is on
-// pace, 20 means 20% more spent than the share of the window that has passed.
-function pace(w, now) {
-  if (w.used == null || !w.resets) return null;
-  const len = w.min * 60000;
-  const passed = Math.min(len, Math.max(0, len - (w.resets - now)));
-  return w.used - (passed / len) * 100;
-}
-
-// "quiet" | "warn" | "high". Very high use is never quiet, whatever the pace.
-export function level(w, now) {
-  if (w.used == null) return "quiet";
-  const p = pace(w, now) ?? 0;
-  if (w.used >= 90 || p >= 35) return "high";
-  if (w.used >= 75 || p >= 15) return "warn";
-  return "quiet";
-}
-
-// Time until 100% at the average speed so far in this window.
-function runway(w, now) {
-  if (w.used == null || !w.resets || w.used <= 0) return null;
-  const len = w.min * 60000;
-  const passed = len - (w.resets - now);
-  if (passed <= 0) return null;
-  return ((100 - w.used) * passed) / w.used;
-}
+const firstLine = (s) => (s ?? "").trim().split("\n", 1)[0];
 
 export default class QuietStatus extends View {
   init(_props, cx) {
-    this.usage = {}; // machine name ("" for this computer) -> { claude, codex, read }
+    this.usage = {}; // machine name ("" for this computer) -> parseRead(...) + { read }
     this.icons = {}; // machine name -> { [program key]: Program }
     this.reading = new Set();
+    this.again = new Set(); // machines to read once more when their read ends
     this.machine = this.activeMachine();
     this.read(this.machine, cx);
     cx.timer.every(READ_MS, (cx) => this.read(this.activeMachine(), cx));
@@ -160,21 +76,52 @@ export default class QuietStatus extends View {
     return spaces().find((s) => s.active)?.machine ?? "";
   }
 
-  read(machine, cx) {
-    if (this.reading.has(machine)) return;
+  // `force`: when a read of that machine runs now, read once more after it,
+  // because what it reads may already be old (an account was just switched).
+  read(machine, cx, force = false) {
+    if (this.reading.has(machine)) {
+      if (force) this.again.add(machine);
+      return;
+    }
     this.reading.add(machine);
     const on = machine || null;
     cx.spawn(async (cx) => {
-      try {
-        if (!this.icons[machine]) {
-          const list = await knownAgents({ on }).catch(() => []);
-          this.icons[machine] = Object.fromEntries(list.filter((p) => p.icon).map((p) => [p.key, p]));
-        }
-        const r = await exec("sh", ["-c", READ], { on, timeout: 10000 });
-        if (r.code === 0) this.usage[machine] = { ...parseRead(r.stdout, Date.now()), read: Date.now() };
-      } catch {}
+      do {
+        this.again.delete(machine);
+        try {
+          if (!this.icons[machine]) {
+            const list = await knownAgents({ on }).catch(() => []);
+            this.icons[machine] = Object.fromEntries(list.filter((p) => p.icon).map((p) => [p.key, p]));
+          }
+          const r = await exec("sh", ["-c", READ], { on, timeout: 10000 });
+          if (r.code === 0) this.usage[machine] = { ...parseRead(r.stdout, Date.now()), read: Date.now() };
+        } catch {}
+      } while (this.again.has(machine));
       this.reading.delete(machine);
       cx.notify();
+    });
+  }
+
+  // Makes `name` the account that new sessions of `provider` use on the bar's
+  // machine. Running sessions keep theirs.
+  use(provider, name, cx) {
+    const machine = this.machine;
+    cx.spawn(async (cx) => {
+      let r;
+      try {
+        r = await exec("agent-account", ["use", provider.key, name], { on: machine || null, timeout: 10000 });
+      } catch (e) {
+        r = { code: -1, stdout: "", stderr: String(e?.message ?? e) };
+      }
+      if (r.code === 0) {
+        const list = this.usage[machine]?.accounts?.[provider.key];
+        if (list) list.active = name;
+        notify({ title: `${provider.name}: new sessions use ${name}`, body: "Running sessions keep their account.", level: "success", timeout: 5000 });
+      } else {
+        notify({ title: `${provider.name}: could not switch to ${name}`, body: firstLine(r.stderr) || firstLine(r.stdout) || `agent-account exited with ${r.code}`, level: "error" });
+      }
+      cx.notify();
+      this.read(machine, cx, true);
     });
   }
 
@@ -195,10 +142,10 @@ export default class QuietStatus extends View {
     return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
   }
 
-  // One provider in the bar: its icon, then "5h 12%  7d 78%".
-  gauge(t, provider, u, now) {
+  // Each window of a reading as "5h 12%", colored as in a burn-down chart.
+  values(t, u, now) {
     const stale = u.at != null && now - u.at > STALE_MS;
-    const values = u.windows.map((w) => {
+    return u.windows.map((w) => {
       const lv = stale ? "quiet" : level(w, now);
       const color = stale || w.used == null ? t.dim : lv === "quiet" ? t.muted : t.blocked;
       return h_flex().gap(4).items_center()
@@ -206,20 +153,54 @@ export default class QuietStatus extends View {
         .child(div().text_color(color).when(lv === "high", (el) => el.font_semibold())
           .child(w.used == null ? "–" : `${Math.round(w.used)}%`));
     });
-    const trigger = h_flex().id(`usage-${provider.key}`).gap(8).items_center().cursor_default()
-      .child(this.icon(provider, 13, stale ? t.dim : t.muted))
-      .children(values);
-    return HoverCard.new(`usage-card-${provider.key}`).open_delay(600).close_delay(300).anchor("bottom_left")
-      .trigger(trigger).content(this.card(t, provider, u, now));
   }
 
-  card(t, provider, u, now) {
+  // One provider in the bar: its icon, the active account's name when there
+  // are several, then "5h 12%  7d 78%".
+  gauge(t, provider, s, now) {
+    const u = s.reading;
+    const stale = !u || (u.at != null && now - u.at > STALE_MS);
+    const trigger = h_flex().id(`usage-${provider.key}`).gap(8).items_center().cursor_default()
+      .child(this.icon(provider, 13, stale ? t.dim : t.muted))
+      .when(Boolean(s.name), (el) => el.child(div().text_color(t.muted).child(s.name)))
+      .when(Boolean(u), (el) => el.children(this.values(t, u, now)))
+      .when(!u, (el) => el.child(div().text_color(t.dim).child("–")));
+    return HoverCard.new(`usage-card-${provider.key}`).open_delay(600).close_delay(300).anchor("bottom_left")
+      .trigger(trigger).content(this.card(t, provider, s, now));
+  }
+
+  // One account in the card: a check on the active one, its name and email,
+  // its last readings and how old they are. A click on another logged-in
+  // account makes it the one that new sessions use.
+  account(t, provider, a, now) {
+    const pick = !a.active && a.loggedIn;
+    const u = a.reading;
+    const note = !a.loggedIn ? `not logged in · agent-account login ${provider.key} ${a.name}`
+      : !u ? "no reading yet"
+      : u.at ? `updated ${ago(now - u.at)}` : "";
+    return v_flex().id(`account-${provider.key}-${a.name}`).px(6).py(4).gap(2).rounded(5).min_w(0)
+      .when(pick, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => { cx.stop_propagation(); this.use(provider, a.name, cx); }))
+      .child(h_flex().gap(6).items_center().min_w(0)
+        .child(div().w(14).flex_none().when(a.active, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(12).text_color(t.foreground))))
+        .child(div().flex_none().font_medium().text_color(a.loggedIn ? t.foreground : t.muted).child(a.name))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(a.email ?? ""))
+        .when(Boolean(u), (el) => el.child(h_flex().flex_none().gap(8).items_center().text_size(11.5).children(this.values(t, u, now)))))
+      .when(Boolean(note), (el) => el.child(div().id(`account-note-${provider.key}-${a.name}`).pl(20).min_w(0).truncate()
+        .text_size(11).text_color(t.dim).tooltip(note).child(note)));
+  }
+
+  card(t, provider, s, now) {
+    const u = s.reading;
     const fact = (label, value, color) => h_flex().gap(8).items_center().min_w(0)
       .child(div().w(80).flex_none().text_size(11.5).text_color(t.muted).child(label))
       .child(div().flex_1().min_w(0).truncate().text_color(color ?? t.foreground).child(value));
+    const section = (label) => v_flex().pt(4).gap(2).child(div().text_size(11.5).font_medium().text_color(t.muted).child(label));
     const rows = [];
-    for (const w of u.windows) {
-      rows.push(v_flex().pt(4).gap(2).child(div().text_size(11.5).font_medium().text_color(t.muted).child(windowWord(w.min))));
+    if (!u) rows.push(div().text_size(11).text_color(t.dim).child("No reading yet for this account."));
+    for (const w of u?.windows ?? []) {
+      rows.push(section(windowWord(w.min)));
       if (w.used == null) {
         rows.push(fact("Used", "reset since the last reading", t.dim));
         continue;
@@ -232,15 +213,21 @@ export default class QuietStatus extends View {
       const r = runway(w, now);
       if (r != null && w.resets) rows.push(fact("Lasts", r >= w.resets - now ? "past the reset" : `about ${span(r)} more`, r < w.resets - now ? t.blocked : null));
     }
-    if (u.plan) rows.push(fact("Plan", u.plan));
-    const st = tokens(u.sessionTokens);
+    if (u?.plan) rows.push(fact("Plan", u.plan));
+    const st = tokens(u?.sessionTokens);
     if (st) rows.push(fact("Last session", `${st} tokens`));
-    if (u.at) rows.push(fact("Updated", ago(now - u.at), now - u.at > STALE_MS ? t.dim : t.muted));
-    return v_flex().w(280).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_sm()
+    if (u?.at) rows.push(fact("Updated", ago(now - u.at), now - u.at > STALE_MS ? t.dim : t.muted));
+    if (s.accounts.length) {
+      rows.push(section("Accounts"));
+      rows.push(v_flex().children(s.accounts.map((a) => this.account(t, provider, a, now))));
+      rows.push(div().text_size(11).text_color(t.dim).child("Click an account to use it in new sessions."));
+    }
+    const title = s.name ? `${provider.name} usage limits · ${s.name}` : `${provider.name} usage limits`;
+    return v_flex().w(s.accounts.length ? 340 : 280).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_sm()
       .text_size(12).text_color(t.foreground)
-      .child(h_flex().gap(6).pb(2).items_center()
+      .child(h_flex().gap(6).pb(2).items_center().min_w(0)
         .child(this.icon(provider, 14, t.muted))
-        .child(div().font_semibold().child(`${provider.name} usage limits`)))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(title)))
       .children(rows);
   }
 
@@ -252,7 +239,7 @@ export default class QuietStatus extends View {
     const needs = list.filter((a) => a.status === "blocked").length;
     const usage = this.usage[this.machine] ?? {};
     const label = (icon, text) => h_flex().gap(6).items_center().child(svg(`mods/workspace-chrome/${icon}.svg`).size(13)).child(text);
-    const gauges = PROVIDERS.filter((p) => usage[p.key]).map((p) => this.gauge(t, p, usage[p.key], now));
+    const gauges = PROVIDERS.map((p) => [p, providerState(usage, p.key)]).filter(([, s]) => s).map(([p, s]) => this.gauge(t, p, s, now));
     return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
       .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer"))
       .when(Boolean(space?.branch), (el) => el.child(label("branch", space.branch)))
