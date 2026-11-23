@@ -13,11 +13,16 @@ export const STALE_MS = 30 * 60000;
 //   20 newest session files. Sessions are shared by every account, so the
 //   first line of a session file says whose it is; the JS keeps the newest
 //   event per account (a file's time is not its last event's time). Only the
-//   file tails are read, because a long session file grows to many megabytes.
+//   file tails are read, because a long session file grows to many megabytes;
+// - `cursor<TAB><json>`: `agent-account usage cursor --json`, one reading per
+//   Cursor account, cached by agent-account for 5 minutes. An agent-account
+//   older than `usage` prints a usage text or nothing: only a JSON list passes.
 export const READ = `
 if command -v agent-account >/dev/null 2>&1; then
   a=$(agent-account list --json 2>/dev/null | tr -d '\\n')
   if [ -n "$a" ]; then printf 'accounts\\t%s\\n' "$a"; fi
+  u=$(agent-account usage cursor --json --max-age 300 2>/dev/null | tr -d '\\n')
+  case "$u" in "["*) printf 'cursor\\t%s\\n' "$u" ;; esac
 fi
 for c in "\${XDG_CACHE_HOME:-$HOME/.cache}"/claude-usage/*.json; do
   [ -r "$c" ] || continue
@@ -65,10 +70,32 @@ export function parseCodex(text, now) {
   return windows.length ? { windows, at: Number.isFinite(at) ? at : null, plan: r.plan_type ?? null, sessionTokens: Number(total) } : null;
 }
 
-// { accounts, claude: { [account]: reading }, codex: [{ id, reading }] }, the
-// Codex readings newest first. A line that doesn't parse is skipped.
+// One account of `agent-account usage cursor --json`: one window, the billing
+// period, plus the plan and the USD spent of the limit. An account that could
+// not be read (`error`) or has no limit (`used_percent` null) has no reading,
+// so the bar shows the account with no gauge.
+export function parseCursor(item, now) {
+  if (!item || typeof item !== "object" || item.error) return null;
+  const num = (v) => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+  const used = num(item.used_percent);
+  if (used == null) return null;
+  const resets = item.resets_at ? Date.parse(item.resets_at) : NaN;
+  const r = Number.isFinite(resets) ? resets : null;
+  const at = item.updated_at ? Date.parse(item.updated_at) : NaN;
+  return {
+    windows: [{ min: num(item.window_minutes), billing: true, used: r && r <= now ? null : used, resets: r }],
+    at: Number.isFinite(at) ? at : null,
+    plan: typeof item.plan === "string" && item.plan ? item.plan : null,
+    spentUsd: num(item.spent_usd),
+    limitUsd: num(item.limit_usd),
+  };
+}
+
+// { accounts, claude: { [account]: reading }, codex: [{ id, reading }],
+// cursor: { [account]: reading } }, the Codex readings newest first. A line
+// that doesn't parse is skipped.
 export function parseRead(stdout, now) {
-  const out = { accounts: null, claude: {}, codex: [] };
+  const out = { accounts: null, claude: {}, codex: [], cursor: {} };
   // Only the first tabs split fields: the JSON after them may hold tabs too.
   for (const line of (stdout ?? "").split("\n")) {
     const a = line.indexOf("\t");
@@ -77,6 +104,14 @@ export function parseRead(stdout, now) {
     const b = line.indexOf("\t", a + 1);
     try {
       if (kind === "accounts") out.accounts = JSON.parse(line.slice(a + 1));
+      if (kind === "cursor") {
+        const list = JSON.parse(line.slice(a + 1));
+        for (const item of Array.isArray(list) ? list : []) {
+          const reading = parseCursor(item, now);
+          if (reading && typeof item.id === "string" && item.id) out.cursor[item.id] = reading;
+        }
+        continue;
+      }
       if (b < 0) continue;
       const key = line.slice(a + 1, b);
       if (kind === "claude") {
@@ -102,8 +137,8 @@ function newest(readings) {
 
 // What the bar shows for one provider ("claude" | "codex" | "cursor"), or
 // null for nothing: { reading, label, accounts, managed }.
-// - `reading`: the active account's last reading, or null (always for
-//   Cursor, which saves no usage limits);
+// - `reading`: the active account's last reading, or null (for Cursor, only
+//   an agent-account with `usage` gives one);
 // - `label`: the active account's label, only when there are several;
 // - `accounts`: every account, only when there are several, each
 //   { id, label, tag, email, loggedIn, active, reading }. `id` is what
@@ -126,6 +161,7 @@ export function providerState(parsed, key) {
   const activeId = ids.includes(list.active) ? list.active : "default";
   const readingOf = (id, a) => key === "claude" ? claudeReading(parsed, id)
     : key === "codex" ? (a.account_id ? newest((parsed.codex ?? []).filter((c) => c.id === a.account_id).map((c) => c.reading)) : null)
+    : key === "cursor" ? parsed?.cursor?.[id] ?? null
     : null;
   const accounts = list.accounts.map((a) => {
     const id = idOf(a);
@@ -151,10 +187,20 @@ export function providerState(parsed, key) {
   return { reading: active.reading, label: active.label, accounts, managed };
 }
 
+// "5h", "7d": a window named by its length, not by its slot, because a plan
+// can have only the weekly one. A billing period of about a month is "mo",
+// also when agent-account could not tell its length.
+export function windowName(min, billing = false) {
+  if (!min) return billing ? "mo" : "?";
+  if (min < 1440) return `${Math.round(min / 60)}h`;
+  if (min >= 27 * 1440 && min <= 32 * 1440) return "mo";
+  return `${Math.round(min / 1440)}d`;
+}
+
 // How far the spending runs ahead of the clock, in points of percent: 0 is on
 // pace, 20 means 20% more spent than the share of the window that has passed.
 export function pace(w, now) {
-  if (w.used == null || !w.resets) return null;
+  if (w.used == null || !w.resets || !w.min) return null;
   const len = w.min * 60000;
   const passed = Math.min(len, Math.max(0, len - (w.resets - now)));
   return w.used - (passed / len) * 100;
@@ -171,7 +217,7 @@ export function level(w, now) {
 
 // Time until 100% at the average speed so far in this window.
 export function runway(w, now) {
-  if (w.used == null || !w.resets || w.used <= 0) return null;
+  if (w.used == null || !w.resets || !w.min || w.used <= 0) return null;
   const len = w.min * 60000;
   const passed = len - (w.resets - now);
   if (passed <= 0) return null;

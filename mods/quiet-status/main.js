@@ -8,12 +8,13 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, HoverCard } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify, openOverlay } from "herdr";
-import { READ, STALE_MS, parseRead, providerState, pace, level, runway } from "./usage.js";
+import { READ, STALE_MS, parseRead, providerState, pace, level, runway, windowName } from "./usage.js";
 
 const READ_MS = 60000;
 
-// `limits: false`: the agent saves no usage limits, so the bar has no gauges
-// for it, only its accounts.
+// `limits: false`: a reading is not sure to come (Cursor's comes only from an
+// agent-account with `usage`, and an account it cannot read has none), so a
+// missing one is silent: the account with no gauge, no "–".
 const PROVIDERS = [
   { key: "claude", name: "Claude", limits: true },
   { key: "codex", name: "Codex", limits: true },
@@ -28,18 +29,14 @@ const loginCommand = (provider, id) =>
     ? (id === "default" ? "cursor-agent login" : `agent-account add cursor ${id}`)
     : id === "default" ? `${provider.key} login` : `agent-account login ${provider.key} ${id}`;
 
-// "5h", "7d": a window named by its length, not by its slot, because a plan
-// can have only the weekly one.
-function windowName(min) {
-  if (!min) return "?";
-  return min < 1440 ? `${Math.round(min / 60)}h` : `${Math.round(min / 1440)}d`;
+function windowWord(w) {
+  if (w.billing) return "Billing period";
+  if (w.min === 300) return "5-hour";
+  if (w.min === 10080) return "Weekly";
+  return `${windowName(w.min)} window`;
 }
 
-function windowWord(min) {
-  if (min === 300) return "5-hour";
-  if (min === 10080) return "Weekly";
-  return `${windowName(min)} window`;
-}
+const usd = (n) => `$${n.toFixed(2)}`;
 
 function span(ms) {
   const m = Math.max(0, Math.round(ms / 60000));
@@ -162,7 +159,7 @@ export default class QuietStatus extends View {
       const lv = stale ? "quiet" : level(w, now);
       const color = stale || w.used == null ? t.dim : lv === "quiet" ? t.muted : t.blocked;
       return h_flex().gap(4).items_center()
-        .child(div().text_color(t.dim).child(windowName(w.min)))
+        .child(div().text_color(t.dim).child(windowName(w.min, w.billing)))
         .child(div().text_color(color).when(lv === "high", (el) => el.font_semibold())
           .child(w.used == null ? "–" : `${Math.round(w.used)}%`));
     });
@@ -172,7 +169,7 @@ export default class QuietStatus extends View {
   // are several, then "5h 12%  7d 78%".
   gauge(t, provider, s, now) {
     const u = s.reading;
-    const stale = provider.limits && (!u || (u.at != null && now - u.at > STALE_MS));
+    const stale = u ? u.at != null && now - u.at > STALE_MS : provider.limits;
     const trigger = h_flex().id(`usage-${provider.key}`).gap(8).items_center().cursor_default()
       .child(this.icon(provider, 13, stale ? t.dim : t.muted))
       .when(Boolean(s.label), (el) => el.child(div().text_color(t.muted).child(s.label)))
@@ -189,8 +186,7 @@ export default class QuietStatus extends View {
     const pick = !a.active && a.loggedIn;
     const u = a.reading;
     const note = !a.loggedIn ? `not logged in · ${loginCommand(provider, a.id)}`
-      : !provider.limits ? ""
-      : !u ? "no reading yet"
+      : !u ? (provider.limits ? "no reading yet" : "")
       : u.at ? `updated ${ago(now - u.at)}` : "";
     // The email only when the label doesn't already say it.
     const email = a.email && a.email !== a.label ? a.email : "";
@@ -232,15 +228,16 @@ export default class QuietStatus extends View {
     const section = (label) => v_flex().pt(4).gap(2).child(div().text_size(11.5).font_medium().text_color(t.muted).child(label));
     const rows = [];
     if (!u && provider.limits) rows.push(div().text_size(11).text_color(t.dim).child("No reading yet for this account."));
-    if (!provider.limits) rows.push(div().text_size(11).text_color(t.dim).child(`${provider.name} saves no usage limits, so there are no gauges.`));
+    if (!u && !provider.limits) rows.push(div().text_size(11).text_color(t.dim).child("No usage reading for this account."));
     for (const w of u?.windows ?? []) {
-      rows.push(section(windowWord(w.min)));
+      rows.push(section(windowWord(w)));
       if (w.used == null) {
         rows.push(fact("Used", "reset since the last reading", t.dim));
         continue;
       }
       const lv = level(w, now);
       rows.push(fact("Used", `${Math.round(w.used)}%`, lv === "quiet" ? null : t.blocked));
+      if (u.spentUsd != null) rows.push(fact("Spent", u.limitUsd != null ? `${usd(u.spentUsd)} of ${usd(u.limitUsd)}` : usd(u.spentUsd)));
       if (w.resets) rows.push(fact("Resets in", span(w.resets - now)));
       const p = pace(w, now);
       if (p != null) rows.push(fact("Pace", Math.abs(p) < 1 ? "on pace" : p > 0 ? `${Math.round(p)}% ahead of the clock` : `${Math.round(-p)}% behind the clock`, p >= 15 ? t.blocked : null));
@@ -261,7 +258,7 @@ export default class QuietStatus extends View {
       rows.push(section("Accounts"));
       rows.push(this.manage(t));
     }
-    const what = provider.limits ? `${provider.name} usage limits` : `${provider.name} accounts`;
+    const what = provider.limits || u ? `${provider.name} usage limits` : `${provider.name} accounts`;
     const title = s.label ? `${what} · ${s.label}` : what;
     return v_flex().w(s.accounts.length ? 340 : 280).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_sm()
       .text_size(12).text_color(t.foreground)

@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, utimesSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { READ, parseRead, providerState } from "../mods/quiet-status/usage.js";
+import { READ, parseRead, providerState, parseCursor, pace, level, windowName } from "../mods/quiet-status/usage.js";
 
 const NOW = Date.parse("2030-01-01T12:00:00Z");
 const S = NOW / 1000;
@@ -239,6 +239,110 @@ test("the READ script reads a fake home: accounts, Claude files, newest Codex re
     assert.equal(q.accounts, null);
     assert.equal(providerState(q, "claude").reading.windows[0].used, 10);
     assert.equal(providerState(q, "codex").reading.windows[0].used, 30);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// --- Cursor usage (`agent-account usage cursor --json`) --------------------
+
+const cursorItem = (id, rest) => ({
+  provider: "cursor", id, plan: "Super", used_percent: 42.5, spent_usd: 12.34, limit_usd: 40,
+  resets_at: new Date(NOW + 10 * 86400000).toISOString(), window_minutes: 43200,
+  updated_at: new Date(NOW - 3 * 60000).toISOString(), error: null, ...rest,
+});
+
+const USAGE = [
+  cursorItem("default"),
+  cursorItem("ci", { plan: null, used_percent: null, spent_usd: null, limit_usd: null, resets_at: null, window_minutes: null, error: "HTTP 401" }),
+];
+
+test("parseCursor: one billing-period window with spent and limit in USD", () => {
+  const u = parseCursor(cursorItem("default"), NOW);
+  assert.equal(u.windows.length, 1);
+  assert.deepEqual([u.windows[0].min, u.windows[0].used, u.windows[0].resets], [43200, 42.5, NOW + 10 * 86400000]);
+  assert.deepEqual([u.plan, u.spentUsd, u.limitUsd, u.at], ["Super", 12.34, 40, NOW - 3 * 60000]);
+  // An account that could not be read, or a plan with no limit, has no gauge.
+  assert.equal(parseCursor(USAGE[1], NOW), null);
+  assert.equal(parseCursor(cursorItem("x", { used_percent: null }), NOW), null);
+  assert.equal(parseCursor(null, NOW), null);
+  // A period that ended since the reading: the percent belonged to the old one.
+  assert.equal(parseCursor(cursorItem("x", { resets_at: new Date(NOW - 1000).toISOString() }), NOW).windows[0].used, null);
+});
+
+test("parseRead keeps one Cursor reading per account; an error account has none", () => {
+  const p = parseRead(`accounts\t${JSON.stringify(LIST)}\ncursor\t${JSON.stringify(USAGE)}`, NOW);
+  assert.deepEqual(Object.keys(p.cursor), ["default"]);
+  const k = providerState(p, "cursor");
+  assert.equal(k.label, "alice");
+  assert.equal(k.reading.windows[0].used, 42.5);
+  assert.deepEqual(k.accounts.map((a) => [a.id, a.reading?.windows[0].used ?? null]), [["default", 42.5], ["ci", null]]);
+  // Not a list (an old agent-account that printed something else): ignored.
+  assert.deepEqual(parseRead(`cursor\t{"error":"x"}\ncursor\tnot json`, NOW).cursor, {});
+});
+
+test("Cursor with one account shows when it has a reading", () => {
+  const one = { cursor: { active: "default", accounts: [account("default", "alice", null, { logged_in: null })] } };
+  const k = providerState(parseRead(`accounts\t${JSON.stringify(one)}\ncursor\t${JSON.stringify([cursorItem("default")])}`, NOW), "cursor");
+  assert.deepEqual([k.label, k.accounts.length, k.managed, k.reading.windows[0].used], [null, 0, true, 42.5]);
+  // An error account alone shows nothing, as before.
+  const err = parseRead(`accounts\t${JSON.stringify(one)}\ncursor\t${JSON.stringify([{ ...USAGE[1], id: "default" }])}`, NOW);
+  assert.equal(providerState(err, "cursor"), null);
+});
+
+test("the Cursor gauge takes the pace colors of the other windows", () => {
+  const at = (used, leftDays) => parseCursor(cursorItem("x", { used_percent: used, resets_at: new Date(NOW + leftDays * 86400000).toISOString() }), NOW).windows[0];
+  // 15 of 30 days passed: 50% is on pace, 70% runs 20 points ahead.
+  assert.equal(Math.round(pace(at(50, 15), NOW)), 0);
+  assert.equal(level(at(50, 15), NOW), "quiet");
+  assert.equal(level(at(70, 15), NOW), "warn");
+  assert.equal(level(at(90, 25), NOW), "high");
+  // A period of unknown length has no pace: only the percent can color it.
+  const noLen = parseCursor(cursorItem("x", { window_minutes: null, used_percent: 50 }), NOW).windows[0];
+  assert.equal(pace(noLen, NOW), null);
+  assert.equal(level(noLen, NOW), "quiet");
+});
+
+test("windowName: hours, days, and mo for a monthly billing period", () => {
+  assert.deepEqual([300, 10080, 43200, 44640, 40320, null].map((m) => windowName(m)), ["5h", "7d", "mo", "mo", "mo", "?"]);
+  assert.equal(windowName(20160), "14d");
+  assert.equal(windowName(null, true), "mo");
+});
+
+test("the READ script adds Cursor usage, and an old agent-account without usage breaks nothing", () => {
+  const home = mkdtempSync(join(tmpdir(), "quiet-status-"));
+  try {
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const fake = (usage) => {
+      writeFileSync(join(bin, "agent-account"), `#!/bin/sh
+case "$1 $2" in
+  "list --json") cat <<'EOF'
+${JSON.stringify(LIST)}
+EOF
+  ;;
+  "usage cursor") ${usage}
+  ;;
+  *) echo "agent-account: unknown command '$1'" >&2; exit 1 ;;
+esac
+`);
+      chmodSync(join(bin, "agent-account"), 0o755);
+    };
+    const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, XDG_CACHE_HOME: join(home, "cache") };
+    const read = () => execFileSync("sh", ["-c", READ], { env, encoding: "utf8" });
+
+    fake(`[ "$3 $4 $5" = "--json --max-age 300" ] || exit 2; cat <<'EOF'\n${JSON.stringify(USAGE, null, "\t")}\nEOF`);
+    const p = parseRead(read(), NOW);
+    assert.equal(providerState(p, "cursor").reading.windows[0].used, 42.5);
+
+    // An old agent-account: no `usage` command, a usage text on stdout and an error.
+    fake(`echo "Usage: agent-account <command>"; echo "agent-account: unknown command 'usage'" >&2; exit 1`);
+    const out = read();
+    assert.ok(!out.includes("Usage:"));
+    const q = parseRead(out, NOW);
+    assert.equal(q.accounts.claude.active, "work");
+    assert.deepEqual(q.cursor, {});
+    assert.equal(providerState(q, "cursor").reading, null);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
