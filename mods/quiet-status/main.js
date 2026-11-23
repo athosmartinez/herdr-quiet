@@ -22,8 +22,11 @@ const PROVIDERS = [
 
 // What a not-logged-in account needs: a login for Claude and Codex; for
 // Cursor, `add` prints the command that saves the account's API key.
+// The `default` account is the CLI's own login.
 const loginCommand = (provider, id) =>
-  provider.key === "cursor" ? `agent-account add cursor ${id}` : `agent-account login ${provider.key} ${id}`;
+  provider.key === "cursor"
+    ? (id === "default" ? "cursor-agent login" : `agent-account add cursor ${id}`)
+    : id === "default" ? `${provider.key} login` : `agent-account login ${provider.key} ${id}`;
 
 // "5h", "7d": a window named by its length, not by its slot, because a plan
 // can have only the weekly one.
@@ -102,7 +105,9 @@ export default class QuietStatus extends View {
             this.icons[machine] = Object.fromEntries(list.filter((p) => p.icon).map((p) => [p.key, p]));
           }
           const r = await exec("sh", ["-c", READ], { on, timeout: 10000 });
-          if (r.code === 0) this.usage[machine] = { ...parseRead(r.stdout, Date.now()), read: Date.now() };
+          // A read that started before a switch is already old: the next one wins,
+          // so the switched account's mark is not undone in between.
+          if (r.code === 0 && !this.again.has(machine)) this.usage[machine] = { ...parseRead(r.stdout, Date.now()), read: Date.now() };
         } catch {}
       } while (this.again.has(machine));
       this.reading.delete(machine);

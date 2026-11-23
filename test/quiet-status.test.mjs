@@ -154,17 +154,35 @@ test("without agent-account: one unnamed reading, as before", () => {
   assert.equal(providerState({}, "codex"), null);
 });
 
-test("the first version's rate-limits.json counts as the default account", () => {
-  const p = parseRead(`claude\trate-limits\t${claudeFile(42, 50)}`, NOW);
-  assert.equal(providerState(p, "claude").reading.windows[0].used, 42);
+test("a Claude file of another account is never the default account's", () => {
+  const list = { claude: { active: "default", accounts: [{ name: "default", email: null, logged_in: true }] } };
+  const p = parseRead(`accounts\t${JSON.stringify(list)}\nclaude\trate-limits\t${claudeFile(42, 50)}\nclaude\told\t${claudeFile(87, 90)}`, NOW);
+  assert.equal(providerState(p, "claude"), null);
 });
 
-test("one account: every reading on the machine is its own", () => {
+test("one account: a Codex reading of another account id is not its own", () => {
+  const list = { codex: { active: "default", accounts: [{ name: "default", email: null, logged_in: true, account_id: "new-id" }] } };
+  const p = parseRead(`accounts\t${JSON.stringify(list)}\ncodex\told-id\t${limits(87, 8)}`, NOW);
+  assert.equal(providerState(p, "codex"), null);
+});
+
+test("one account with an unknown id: the newest reading", () => {
   const list = { codex: { active: "default", accounts: [{ name: "default", email: null, logged_in: true, account_id: null }] } };
   const p = parseRead(`accounts\t${JSON.stringify(list)}\ncodex\t\t${limits(7, 8)}`, NOW);
   const x = providerState(p, "codex");
   assert.equal(x.label, null);
   assert.equal(x.reading.windows[0].used, 7);
+});
+
+test("Codex: the newest event per account wins, not the first file", () => {
+  const list = { codex: { active: "default", accounts: [
+    { name: "default", email: null, logged_in: true, account_id: "a1" },
+    { name: "work", email: null, logged_in: true, account_id: "a2" },
+  ] } };
+  const at = (min) => new Date(NOW - min * 60000).toISOString();
+  const ev = (used, ts) => limits(used, 8).replace(/"timestamp":"[^"]*"/, `"timestamp":"${ts}"`);
+  const p = parseRead(`accounts\t${JSON.stringify(list)}\ncodex\ta1\t${ev(10, at(120))}\ncodex\ta1\t${ev(80, at(5))}`, NOW);
+  assert.equal(providerState(p, "codex").reading.windows[0].used, 80);
 });
 
 test("the READ script reads a fake home: accounts, Claude files, newest Codex reading per account", () => {
@@ -189,15 +207,16 @@ test("the READ script reads a fake home: accounts, Claude files, newest Codex re
       const t = (NOW - ageMin * 60000) / 1000;
       utimesSync(f, t, t);
     };
-    rollout("a-new", [meta("acct-a"), '{"type":"event_msg","payload":{"type":"agent_message"}}'], 1); // no reading
+    // A rate-limit event with no window is no reading: the older file's one stays.
+    rollout("a-new", [meta("acct-a"), '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":null,"secondary":null}}}'], 1);
     rollout("b-new", [meta("acct-b"), limits(10, 11), limits(30, 40)], 2);
     rollout("a-old", [meta("acct-a"), limits(5, 6, 120)], 3);
-    rollout("b-old", [meta("acct-b"), limits(99, 99, 300)], 4); // older than b-new: skipped
+    rollout("b-old", [meta("acct-b"), limits(99, 99, 300)], 4); // read, but its event is older than b-new's
 
     const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, XDG_CACHE_HOME: join(home, "cache") };
     const stdout = execFileSync("sh", ["-c", READ], { env, encoding: "utf8" });
     const kinds = stdout.trim().split("\n").map((l) => (l.startsWith("accounts\t") ? "accounts" : l.split("\t").slice(0, 2).join(" ")));
-    assert.deepEqual(kinds, ["accounts", "claude default", "claude work", "codex acct-b", "codex acct-a"]);
+    assert.deepEqual(kinds, ["accounts", "claude default", "claude work", "codex acct-b", "codex acct-a", "codex acct-b"]);
 
     const p = parseRead(stdout, NOW);
     assert.equal(providerState(p, "claude").reading.windows[0].used, 55);

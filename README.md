@@ -74,7 +74,9 @@ The status bar shows how much of each agent's usage limit is spent, for the mach
   fi
   ```
 
-  A Claude reading older than 30 minutes shows dim, because only a running session updates it. The first version of this snippet wrote `rate-limits.json`; Quiet still reads it as the `default` account.
+  A Claude reading older than 30 minutes shows dim, because only a running session updates it. The first version of this snippet wrote `rate-limits.json`; rename it or run the new snippet once.
+
+  Known limits: a Codex session resumed under another account still counts for the account that started it, because a session file names only its creator. Two local Codex logins in the same ChatGPT workspace share one account id, so they show the same reading.
 
 Without either file, the status bar looks like Herdr's own.
 

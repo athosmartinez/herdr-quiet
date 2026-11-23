@@ -10,8 +10,9 @@ export const STALE_MS = 30 * 60000;
 // - `claude<TAB><account><TAB><json>`: each file the Claude statusline saves,
 //   one per account, named after it;
 // - `codex<TAB><account id><TAB><json>`: the last rate-limit event of the
-//   newest session of each ChatGPT account. Sessions are shared by every
-//   account, so the first line of a session file says whose it is. Only the
+//   20 newest session files. Sessions are shared by every account, so the
+//   first line of a session file says whose it is; the JS keeps the newest
+//   event per account (a file's time is not its last event's time). Only the
 //   file tails are read, because a long session file grows to many megabytes.
 export const READ = `
 if command -v agent-account >/dev/null 2>&1; then
@@ -22,14 +23,11 @@ for c in "\${XDG_CACHE_HOME:-$HOME/.cache}"/claude-usage/*.json; do
   [ -r "$c" ] || continue
   printf 'claude\\t%s\\t' "$(basename "$c" .json)"; tr -d '\\n' < "$c"; echo
 done
-seen=" "
 for f in $(ls -t "\${CODEX_HOME:-$HOME/.codex}"/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -n 20); do
   id=$(head -n 1 "$f" | grep -o '"creator_account_id":"[^"]*"' | head -n 1 | cut -d '"' -f 4)
-  case "$seen" in *" $id "*) continue ;; esac
-  l=$(tail -c 400000 "$f" | grep '"rate_limits":{' | tail -n 1)
+  l=$(tail -c 400000 "$f" | grep '"rate_limits":{' | grep '"used_percent"' | tail -n 1)
   [ -n "$l" ] || continue
   printf 'codex\\t%s\\t%s\\n' "$id" "$l"
-  seen="$seen$id "
 done
 `;
 
@@ -94,11 +92,8 @@ export function parseRead(stdout, now) {
   return out;
 }
 
-// The statusline snippet of the first version saved one file,
-// `rate-limits.json`, for the normal (`default`) account.
 function claudeReading(parsed, name) {
-  const c = parsed?.claude ?? {};
-  return c[name] ?? (name === "default" ? c["rate-limits"] : null) ?? null;
+  return parsed?.claude?.[name] ?? null;
 }
 
 function newest(readings) {
@@ -116,9 +111,10 @@ function newest(readings) {
 // Without `agent-account` there is one unlabeled reading, the newest one.
 export function providerState(parsed, key) {
   const list = parsed?.accounts?.[key];
+  // Without `agent-account` there is no owner to check: the newest reading.
   const fallback = key === "claude"
     ? claudeReading(parsed, "default") ?? newest(Object.values(parsed?.claude ?? {}))
-    : key === "codex" ? parsed?.codex?.[0]?.reading ?? null : null;
+    : key === "codex" ? newest((parsed?.codex ?? []).map((c) => c.reading)) : null;
   if (!Array.isArray(list?.accounts) || list.accounts.length === 0) {
     return fallback ? { reading: fallback, label: null, accounts: [] } : null;
   }
@@ -126,7 +122,7 @@ export function providerState(parsed, key) {
   const ids = list.accounts.map(idOf);
   const activeId = ids.includes(list.active) ? list.active : "default";
   const readingOf = (id, a) => key === "claude" ? claudeReading(parsed, id)
-    : key === "codex" ? (a.account_id && (parsed.codex ?? []).find((c) => c.id === a.account_id)?.reading) || null
+    : key === "codex" ? (a.account_id ? newest((parsed.codex ?? []).filter((c) => c.id === a.account_id).map((c) => c.reading)) : null)
     : null;
   const accounts = list.accounts.map((a) => {
     const id = idOf(a);
@@ -141,8 +137,11 @@ export function providerState(parsed, key) {
     };
   });
   if (accounts.length === 1) {
-    // One account: every reading on the machine is its own.
-    const reading = accounts[0].reading ?? fallback;
+    // One account: its own reading. A reading of another owner (an old
+    // login, a removed account) is never shown as its. Only a Codex account
+    // whose id is unknown takes the newest one.
+    const own = accounts[0].reading;
+    const reading = own ?? (key === "codex" && !list.accounts[0].account_id ? fallback : null);
     return reading ? { reading, label: null, accounts: [] } : null;
   }
   const active = accounts.find((a) => a.active) ?? accounts[0];
