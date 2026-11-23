@@ -16,7 +16,8 @@ Left to right, the same regions as Herdr (main):
     - a space without git is a single 30px line;
   - **Agents** (`quiet-agents`): a fork of Herdr's `agents` list with the same status glyphs as the spaces rows, a model chip per agent, the spaces list's header and group heights, one selection style, an 18px icon cell, and pin and age in one 28px slot;
   - the shipped footer (69px).
-- **Work area**: the shipped tab bar (42px), then the panes with 8px gaps, an 8px radius, a 1px `border` frame and a 1px `accent` frame on the focused pane; terminal padding 14×12px. The Files/Changes side panel and the 28px status bar are the shipped ones.
+- **Work area**: the shipped tab bar (42px), then the panes with 8px gaps, an 8px radius, a 1px `border` frame and a 1px `accent` frame on the focused pane; terminal padding 14×12px. The Files/Changes side panel is the shipped one.
+- **Status bar** (`quiet-status`, 28px): the shipped bar (machine, branch, agents, needs you, palette hint), then after a 1px `border` divider one gauge per agent with a known limit: its program icon (13px), then each window as `5h` in `dim` and its percent in `muted`. A percent is `blocked` (amber) at 15 points ahead of the clock or 75% used, and semibold at 35 points or 90%. A reading whose window has reset shows `–`; a Claude reading older than 30 minutes shows in `dim`. The hover card (280px) gives, per window: used, resets in, pace, how long it lasts at this speed; then the plan, the last session's tokens (Codex) and the reading's age.
 
 Palette (`themes/quiet-dark.json`, `themes/quiet-light.json`), dark / light:
 
@@ -82,9 +83,10 @@ Sub-agent names, statuses and the tree follow the shipped `agents` mod (`clean`,
 ## Built from
 
 - `themes/quiet-dark.json`, `themes/quiet-light.json`: the palette above, with the panel colors in `colors`.
-- `layouts/quiet.json`: a copy of Herdr's `main` layout with `"theme": {"light": "quiet-light", "dark": "quiet-dark"}` on the root, the `spaces` block's mod set to `quiet-spaces`, and pane radius 8. No `font`: the person's settings decide.
+- `layouts/quiet.json`: a copy of Herdr's `main` layout with `"theme": {"light": "quiet-light", "dark": "quiet-dark"}` on the root, the `spaces`, `agents` and `status` blocks' mods set to `quiet-spaces`, `quiet-agents` and `quiet-status`, and pane radius 8. No `font`: the person's settings decide.
 - `mods/quiet-spaces/`: a fork of the shipped `spaces` mod. Changes: the status cell at the right (`statusGlyph`), the sub-agent count (`subAgents`: each live terminal with a `parent` is walked up to the first ancestor that is an agent in a space), line 2 with icons (`detail`), and the `pr`/`prAt` cache, `lookPr`, `ghAccount` and `diff`. Its icons are Lucide (ISC) in `mods/quiet-spaces/icons/`. It uses `spaces()`, `panes()`, `machines()`, `agents()`, `terminals()`, `theme()`, `readTextFile`, `appHome`, `exec`, `hc`, `watchFolder`, `run("space.select" | "space.move" | "space.new")`, and the shipped `mods/workspace-chrome/spinner.svg` and `check.svg`.
-- Shipped mods used as they are: `workspace-chrome`, `agents`, `tabs`, `pane`, `files`, `changes`, `workspace-status`, `menu`.
+- Shipped mods used as they are: `workspace-chrome`, `tabs`, `pane`, `files`, `changes`, `menu`.
+- `mods/quiet-status/`: a fork of the shipped `workspace-status` mod. Once a minute, and when the active space's machine changes, one `sh -c` on that machine reads `~/.cache/claude-usage/rate-limits.json` (written by the Claude statusline snippet in the README) and the last `"rate_limits":{` line in the tail (400 KB) of the 5 newest `~/.codex/sessions/*/*/*/rollout-*.jsonl`. It uses `exec`, `knownAgents` (for the icons), `spaces()`, `agents()`, `keys()` and `run("app.palette")`.
 - Programs run: `git` (`rev-parse`, `symbolic-ref`, `rev-list`, `diff --shortstat`) and `gh pr view --json number,state,isDraft,reviewDecision,baseRefName,headRefName`, on the space's own machine. Nothing else reaches the network.
 
 ## Watch out

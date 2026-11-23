@@ -13,7 +13,7 @@ Ask your Herdr agent to add `github.com/athosmartinez/herdr-quiet`, or copy by h
 ```sh
 cp layouts/quiet.json ~/.config/herdr-app/layouts/
 cp themes/quiet-*.json ~/.config/herdr-app/themes/
-cp -R mods/quiet-spaces mods/quiet-agents ~/.config/herdr-app/mods/
+cp -R mods/quiet-spaces mods/quiet-agents mods/quiet-status ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/quiet-spaces
 herdr-app do layout.switch --name quiet
 ```
@@ -53,6 +53,25 @@ All are optional and off unless set. The file is read at start and every minute.
 - `gate`: shows a shield next to the branch when a PR gate script left a stamp at `<git common dir>/agent-pr-gate/<HEAD sha>.json` with `"pass": true`. Green only when HEAD is also pushed.
 - `trackers`: by the repo's GitHub owner (or `"*"`), a task key found in the branch name with `pattern`, shown as a chip that opens `url`. The optional `command` (no shell, `{KEY}` replaced) prints `{"title": "...", "status": "..."}` for the card; it runs on the window's own machine and is cached for 5 minutes.
 
+### Usage limits in the status bar
+
+The status bar shows how much of each agent's usage limit is spent, for the machine it names: `5h 12%  7d 78%` after the Claude icon, `7d 5%` after the Codex icon. A value turns amber when it is spent faster than its window passes (15 points ahead of the clock, or 75% used), and semibold at 35 points ahead or 90%. Rest on it for the reset time, the pace and how long the limit lasts at this speed.
+
+- **Codex** needs nothing: Quiet reads the last rate-limit event in the newest files of `~/.codex/sessions`.
+- **Claude Code** gives its limits only to its statusline command. Add these lines to that script to save them where Quiet reads them (it needs `jq`):
+
+  ```sh
+  # $input is the JSON that Claude Code sends to the statusline on stdin.
+  d="${XDG_CACHE_HOME:-$HOME/.cache}/claude-usage"
+  if echo "$input" | jq -e '.rate_limits' >/dev/null 2>&1 && mkdir -p "$d"; then
+    echo "$input" | jq -c '{captured_at: now|floor, rate_limits}' > "$d/rate-limits.json.$$" && mv "$d/rate-limits.json.$$" "$d/rate-limits.json"
+  fi
+  ```
+
+  A Claude reading older than 30 minutes shows dim, because only a running session updates it.
+
+Without either file, the status bar looks like Herdr's own.
+
 ### Orchestrating agents
 
 - **Needs you:** when an agent anywhere waits for you, a row appears above the spaces. A click goes to the next waiting agent; resting on it lists them all with what each one asks.
@@ -69,7 +88,7 @@ If `mods/quiet-spaces` is a symlink into a clone, Herdr may not notice edits mad
 
 ## Credits
 
-`mods/quiet-spaces` and `mods/quiet-agents` are forks of the `spaces` and `agents` mods that ship with Herdr (Apache-2.0). The look borrows from t3code and Orca.
+`mods/quiet-spaces`, `mods/quiet-agents` and `mods/quiet-status` are forks of the `spaces`, `agents` and `workspace-status` mods that ship with Herdr (Apache-2.0). The look borrows from t3code and Orca.
 
 ## License
 
