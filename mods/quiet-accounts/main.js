@@ -245,7 +245,7 @@ export default class QuietAccounts extends View {
     const login = this.value("login").trim();
     if (!validGhName(owner)) return this.fail("Owner: the GitHub user or organization in the repo's origin", cx);
     if (!validGhName(login)) return this.fail("Account: a gh login (letters, digits and -)", cx);
-    this.writeMap({ from: f.owner, owner, login }, cx);
+    this.writeMap({ from: f.owner, owner, login }, cx, f);
   }
 
   unmap(owner, cx) {
@@ -254,12 +254,14 @@ export default class QuietAccounts extends View {
 
   // One change to gh_accounts; the other pairs stay as written. Writes
   // quiet.json only if it is still the text read, so an edit made in the
-  // meantime (by hand or by another window) is never lost. Only an open owner
-  // form takes the result: an Unmap leaves another open form (an add) alone.
-  writeMap(change, cx) {
+  // meantime (by hand or by another window) is never lost. Only the form that
+  // asked (`form`, a saved owner form) takes the result: an Unmap passes none,
+  // so its result is a toast and any open form keeps its draft.
+  writeMap(change, cx, form = null) {
     if (this.busy) return;
+    const mine = () => Boolean(form) && this.form === form;
     const fail = (message, cx) => {
-      if (this.form?.kind === "map") return this.fail(message, cx);
+      if (mine()) return this.fail(message, cx);
       this.busy = false;
       notify({ title: "quiet.json not changed", body: message, level: "error" });
       cx.notify();
@@ -283,7 +285,7 @@ export default class QuietAccounts extends View {
       // compares against it, not the old text.
       this.config = { text: next, ...readGhAccounts(next) };
       this.busy = false;
-      if (this.form?.kind === "map") this.closeForm(cx);
+      if (mine()) this.closeForm(cx);
       this.readConfig(cx);
       cx.notify();
     });
