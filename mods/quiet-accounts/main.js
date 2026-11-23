@@ -254,17 +254,22 @@ export default class QuietAccounts extends View {
 
   // One change to gh_accounts; the other pairs stay as written. Writes
   // quiet.json only if it is still the text read, so an edit made in the
-  // meantime (by hand or by another window) is never lost.
+  // meantime (by hand or by another window) is never lost. Only an open owner
+  // form takes the result: an Unmap leaves another open form (an add) alone.
   writeMap(change, cx) {
     if (this.busy) return;
+    const fail = (message, cx) => {
+      if (this.form?.kind === "map") return this.fail(message, cx);
+      this.busy = false;
+      notify({ title: "quiet.json not changed", body: message, level: "error" });
+      cx.notify();
+    };
     let next;
     try {
       if (!this.config.ok) throw new Error(this.config.error);
       next = editGhAccounts(this.config.text, change);
     } catch (e) {
-      if (this.form) return this.fail(String(e?.message ?? e), cx);
-      notify({ title: "quiet.json not changed", body: String(e?.message ?? e), level: "error" });
-      return;
+      return fail(String(e?.message ?? e), cx);
     }
     this.busy = true;
     cx.spawn(async (cx) => {
@@ -272,14 +277,10 @@ export default class QuietAccounts extends View {
         await writeTextFile(this.configPath, next, this.config.text ?? null);
       } catch (e) {
         this.readConfig(cx);
-        const msg = `${configError("written", e)}. It is read again: try once more.`;
-        if (this.form) return this.fail(msg, cx);
-        this.busy = false;
-        notify({ title: "quiet.json not changed", body: msg, level: "warning" });
-        return;
+        return fail(`${configError("written", e)}. It is read again: try once more.`, cx);
       }
       this.busy = false;
-      this.closeForm(cx);
+      if (this.form?.kind === "map") this.closeForm(cx);
       this.readConfig(cx);
       cx.notify();
     });
