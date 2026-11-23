@@ -226,6 +226,30 @@ export function statusCard(t, id, list, statusGlyph) {
     .child(scrollList(id, list.map((a, i) => agentLine(t, `${id}-a${i}`, a, statusGlyph, () => run("agent.focus", { terminal: a.address })))));
 }
 
+// Every agent waiting for the person: who, where, since when, and the end of
+// its screen, where the tool asks its question. Open shows the agent; Peek
+// looks at its terminal over the current tab. Nothing is approved from here:
+// the answer is given in the agent's own terminal.
+export function needsCard(t, id, list, statusGlyph) {
+  const mono = (text) => div().font_family("JetBrains Mono").text_size(11).text_color(t.muted).truncate().child(text.replace(/ /g, " "));
+  return card(t, 460)
+    .child(heading(t, null, `${list.length} agent${list.length === 1 ? "" : "s"} waiting for you`))
+    .child(scrollList(id, list.map((a, i) => v_flex().gap(4).p(8).rounded(6).bg(t.surface).border_1().border_color(t.border)
+      .child(h_flex().gap(6).items_center().min_w(0)
+        .child(statusGlyph(t, "blocked"))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(a.name))
+        .when(Boolean(a.model), (el) => el.child(div().flex_none().px(4).rounded(4).bg(t.raised).font_family("JetBrains Mono").text_size(10.5)
+          .text_color(t.muted).child(a.model.effort ? `${a.model.model}·${a.model.effort}` : a.model.model)))
+        .when(Boolean(a.space), (el) => el.child(div().flex_none().max_w(140).truncate().text_size(11).text_color(t.dim).child(a.space))))
+      .child(a.prompt && a.prompt.length
+        ? v_flex().gap(0).p(6).rounded(4).bg(t.background).children(a.prompt.map((line) => mono(line)))
+        : div().text_size(11).text_color(t.dim).child("Reading its screen…"))
+      .child(actions(
+        button(t, `${id}-open${i}`, "Open", () => run("agent.focus", { terminal: a.address })),
+        button(t, `${id}-peek${i}`, "Peek", () => run("terminal.peek", { terminal: a.address })),
+      ))), 420));
+}
+
 export function spaceCard(t, id, s, info) {
   return card(t)
     .child(heading(t, null, s.name))

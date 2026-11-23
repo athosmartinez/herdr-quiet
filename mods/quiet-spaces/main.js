@@ -7,7 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, readTextFile, appHome } from "herdr";
-import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, clean, kidStatus } from "./cards.js";
+import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, clean, kidStatus } from "./cards.js";
 
 // Live sub-agents per space: each live terminal with a parent is walked up to
 // its first ancestor that is an agent in a space (the same `parent` links the
@@ -25,6 +25,14 @@ export function subAgents(all, top) {
     if (space) (kids[space] ??= []).push(k);
   }
   return kids;
+}
+
+// The last `max` meaningful lines of a screen: no blank lines, no lines made
+// only of box-drawing borders, each cut at 160 characters.
+export function screenTail(text, max = 10) {
+  const lines = String(text ?? "").split("\n").map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim() && !/^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╯╰═║╔╗╚╝╟╢·.\-_=|+]+$/.test(l));
+  return lines.slice(-max).map((l) => (l.length > 160 ? `${l.slice(0, 159)}…` : l));
 }
 
 // A plain object from config, or {}.
@@ -192,6 +200,8 @@ export default class Spaces extends View {
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     this.config = {};
+    this.prompts = {}; // blocked agent address -> the last lines of its screen
+    cx.timer.every(4000, (cx) => this.readPrompts(cx));
     this.loadConfig(cx);
     cx.timer.every(60000, (cx) => this.loadConfig(cx));
     // Refresh only when the refs could have changed (see `due`).
@@ -665,6 +675,49 @@ export default class Spaces extends View {
   // Line 2: an icon before each value, so each one says what it is:
   // [branch] name  [PR] #124 approved \u2192 dev  [diff] +82 \u221214.
   // The branch gives way first; the PR and the diff stay whole.
+  // Live agents waiting for the person, anywhere: their status is blocked (a
+  // sub-agent's "error" counts, as in the agents list). Each gets its space's
+  // name and the tail of its screen, where the tool draws its question.
+  needsYou(all) {
+    const spaceName = new Map(spaces().map((s) => [s.id, s.name]));
+    const spaceOfKid = new Map(Object.entries(this.subs ?? {}).flatMap(([space, kids]) => kids.map((k) => [k.address, space])));
+    const agentSpace = new Map((this.agentList ?? []).map((a) => [a.address, a.space]));
+    const out = [];
+    for (const k of all) {
+      if (k.state !== "live") continue;
+      const status = this.listed.has(k.address) ? this.listed.get(k.address) : kidStatus(k, this.listed);
+      if (status !== "blocked") continue;
+      const space = agentSpace.get(k.address) ?? spaceOfKid.get(k.address) ?? null;
+      out.push({ ...this.agentRow(k, "blocked"), space: space ? spaceName.get(space) ?? null : null, prompt: this.prompts?.[k.address] ?? null });
+    }
+    // Look at their screens on a timer, never here.
+    this.blockedNow = out.map((a) => a.address);
+    return out;
+  }
+
+  // Screen tails of blocked agents: read with `hc read` every 4s while some
+  // agent is blocked, at most 4 at a time; dropped once it moves on.
+  readPrompts(cx) {
+    const want = this.blockedNow ?? [];
+    for (const a of Object.keys(this.prompts)) if (!want.includes(a)) delete this.prompts[a];
+    if (!want.length || this.readingPrompts) return;
+    this.readingPrompts = true;
+    cx.spawn(async (cx) => {
+      const queue = [...want];
+      await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+        while (queue.length) {
+          const addr = queue.shift();
+          try {
+            const r = await hc(["read", addr, "--lines", "0"]);
+            if (r.code === 0) this.prompts[addr] = screenTail(r.stdout);
+          } catch {}
+        }
+      }));
+      this.readingPrompts = false;
+      cx.notify();
+    });
+  }
+
   // A terminal as a card line, named as the agents list names a sub-agent.
   // `since`: when its tab started working (Herdr's `working_since`), only while
   // it works; null when Herdr doesn't know, so the card shows no time at all.
@@ -833,6 +886,7 @@ export default class Spaces extends View {
     const tabSince = new Map(spaces().flatMap((s) => (s.tabs ?? []).map((c) => [c.id, c.working_since])));
     this.workingSince = new Map(this.agentList.map((a) => [a.address, tabSince.get(a.tab) ?? null]));
     this.subs = subAgents(all, this.agentList);
+    const needs = this.needsYou(all);
     const list = this.grouped(t, collapsed);
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;
@@ -847,6 +901,12 @@ export default class Spaces extends View {
         .when(!collapsed, el => el.child("Spaces"))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
+      // Every agent waiting for you, in any space or machine, behind one row.
+      .when(needs.length > 0 && !collapsed, (el) => el.child(div().px(8).pb(4).child(hover("needs-card",
+        h_flex().h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.blocked).cursor_pointer()
+          .child(statusGlyph(t, "blocked"))
+          .child(div().flex_1().child(`${needs.length} need${needs.length === 1 ? "s" : ""} you`)),
+        needsCard(t, "needs-card", needs, statusGlyph)).w_full())))
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
