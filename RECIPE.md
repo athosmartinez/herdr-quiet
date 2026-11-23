@@ -28,10 +28,10 @@ Palette (`themes/quiet-dark.json`, `themes/quiet-light.json`), dark / light:
 | surface / popover / raised | `#111111` / `#141414` / `#171717` | `#ffffff` |
 | hover / selected | `#1d1d1d` / `#242424` | `#f4f4f5` / `#ececef` |
 | border / input | `#1e1e1e` / `#252525` | `#e4e4e7` / `#d4d4d8` |
-| foreground / muted / dim | `#f5f5f5` / `#a3a3a3` / `#737373` | `#18181b` / `#71717a` / `#a1a1aa` |
+| foreground / muted / dim | `#f5f5f5` / `#a3a3a3` / `#737373` | `#18181b` / `#52525b` / `#71717a` |
 | accent (= solid) | `#346bf1` | `#1b4ed8` |
 | selection / cursor | `#13244c` / `#b4cbff` | `#dbe4ff` / `#3f3f46` |
-| working / blocked / done / idle | `#6cb5d8` / `#e9c348` / `#64d1a6` / `#525252` | `#0284c7` / `#d97706` / `#059669` / `#a1a1aa` |
+| working / blocked / done / idle | `#6cb5d8` / `#e9c348` / `#64d1a6` / `#666666` | `#0369a1` / `#b45309` / `#047857` / `#8a8a93` |
 
 The 16 ANSI colors are Tailwind 400/300 shades in dark and 600/700 in light, each at least 4.8:1 on the terminal background.
 

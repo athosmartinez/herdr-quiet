@@ -40,7 +40,7 @@
     "working": "#6cb5d8",
     "blocked": "#e9c348",
     "done": "#64d1a6",
-    "idle": "#525252",
+    "idle": "#666666",
     "unknown": "#737373"
   }
 }

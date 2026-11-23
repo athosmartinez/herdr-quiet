@@ -153,7 +153,7 @@ const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b
 export function statusGlyph(t, status) {
   const cell = (el) => h_flex().w(16).h(16).flex_none().items_center().justify_center().child(el);
   if (status === "working") return cell(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900));
-  if (status === "blocked") return cell(div().size(14).rounded(7).bg(t.blocked + "26").text_size(10).font_bold()
+  if (status === "blocked") return cell(div().size(14).rounded(7).bg(t.blocked + "26").text_size(10.5).font_bold()
     .text_color(t.blocked).flex().items_center().justify_center().loop("opacity", { from: 0.55, to: 1, period: 1600 }).child("?"));
   if (status === "done") return cell(svg("mods/workspace-chrome/check.svg").size(13).text_color(t.done));
   if (status === "idle") return cell(div().size(7).rounded(4).border(1.5).border_color(t.idle ?? t.dim));
@@ -664,7 +664,7 @@ export default class Spaces extends View {
       const folded = this.folded.has(m);
       const icon = svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
       const badge = div().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
-      const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
+      const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).font_medium().text_color(t.dim)
         .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(login ? `${m} needs a login: run ${login}. Click for Copy.` : m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer"))
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
@@ -733,7 +733,7 @@ export default class Spaces extends View {
       .justify_end()
       .items_center()
       .text_size(11.5)
-      .text_color(t.dim)
+      .text_color(t.muted)
       .when(Boolean(repo), (el) => el.child(div().min_w(0).truncate().child(repo)))
       .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.muted).child(`\u2191${g.ahead}`)))
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.muted).child(`\u2193${g.behind}`)));
@@ -848,8 +848,8 @@ export default class Spaces extends View {
     const reviewers = this.reviewersOf(g);
     const branch = h_flex().min_w(0).gap(4).items_center()
       .child(icon("git-branch", t.dim))
-      .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
-    return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0)
+      .child(div().min_w(0).max_w(170).truncate().text_color(t.muted).child(g.branch ?? "detached"));
+    return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0).overflow_hidden()
       .child(hover(`branch-card-${w.id}`, branch, branchCard(t, `branch-card-${w.id}`, g, ICON("git-branch"))).flex_initial().min_w(0))
       // Opt-in tracker chip: the task key from the branch name; its card says more.
       .when(Boolean(g.tracker), (el) => el.child(hover(`tracker-card-${w.id}`, part()
@@ -868,7 +868,8 @@ export default class Spaces extends View {
         .child(icon(look.icon, look.color))
         .child(div().text_color(t.muted).child(`#${pr.number}`))
         .child(div().text_color(look.color).child(look.word))
-        .child(div().child(`\u2192 ${pr.base}`))
+        // The base only matters while the PR is open; capped so a long one can't push the row.
+        .when(pr.state === "OPEN", (p) => p.child(div().max_w(90).truncate().child(`\u2192 ${pr.base}`)))
         // Reviewer verdicts from labels: "opus ✓  sol ✗4".
         .children(reviewers.map((r) => verdictChip(t, r))), prCard(t, `pr-card-${w.id}`, pr, look, ICON(look.icon), reviewers)).flex_none()))
       .when(Boolean(diff), (el) => el.child(hover(`diff-card-${w.id}`, part()
@@ -934,7 +935,7 @@ export default class Spaces extends View {
           // Herdr's own identity: the space's colored letter, or the worktree mark.
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
-          .child(hover(`space-card-${w.id}`, div().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(w.name),
+          .child(hover(`space-card-${w.id}`, div().min_w(0).truncate().text_color(on ? t.foreground : t.muted).when(on, (n) => n.font_medium()).child(w.name),
             spaceCard(t, `space-card-${w.id}`, w, this.spaceInfo(w))).flex_initial().min_w(SIDE_MIN))
           .child(g ? this.repoTail(g, tree, w.name, t) : div().flex_1())
           // Live sub-agents started by this space's agents, wherever they run.
@@ -1001,7 +1002,7 @@ export default class Spaces extends View {
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
-        .when(!collapsed, el => el.child("Spaces"))
+        .when(!collapsed, el => el.child(div().font_medium().child("Spaces")))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       // Every agent waiting for you, in any space or machine, behind one row.
@@ -1020,7 +1021,7 @@ export default class Spaces extends View {
               cx.notify();
             })
             .child(statusGlyph(t, "blocked"))
-            .child(div().flex_none().child(`${needs.length} need${needs.length === 1 ? "s" : ""} you`))
+            .child(div().flex_none().font_medium().child(`${needs.length} need${needs.length === 1 ? "s" : ""} you`))
             .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(`→ ${next.name}`)),
           needsCard(t, "needs-card", needs, statusGlyph, next.address)).w_full()));
       })

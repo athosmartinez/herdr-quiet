@@ -31,16 +31,16 @@
     "selected": "#ececef",
     "border": "#e4e4e7",
     "input": "#d4d4d8",
-    "muted": "#71717a",
-    "dim": "#a1a1aa",
+    "muted": "#52525b",
+    "dim": "#71717a",
     "accent": "#1b4ed8",
     "accent_foreground": "#ffffff",
     "solid": "#1b4ed8",
     "solid_foreground": "#ffffff",
-    "working": "#0284c7",
-    "blocked": "#d97706",
-    "done": "#059669",
-    "idle": "#a1a1aa",
+    "working": "#0369a1",
+    "blocked": "#b45309",
+    "done": "#047857",
+    "idle": "#8a8a93",
     "unknown": "#a1a1aa"
   }
 }
