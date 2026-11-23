@@ -9,7 +9,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, validGhName, firstLine,
+  parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting,
+  validGhName, firstLine,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -191,6 +192,12 @@ test("editGhAccounts saves the owner in lowercase, as quiet-spaces looks it up",
   assert.deepEqual(out.gh_accounts, { other: "x", "my-company": "work-me" });
 });
 
+test("addedExisting reads the output of add on an id that exists", () => {
+  assert.equal(addedExisting("claude account 'team' exists: /h/claude/team (its own files are kept; links refreshed)\nLog in, ..."), true);
+  assert.equal(addedExisting("claude account 'team' created: /h/claude/team\nLog in, ..."), false);
+  assert.equal(addedExisting(""), false);
+});
+
 test("validGhName and firstLine", () => {
   assert.equal(validGhName("my-co"), true);
   assert.equal(validGhName("a_b"), false);
@@ -210,7 +217,7 @@ test("the built commands work with agent-account", { skip: !hasCli && "agent-acc
   const env = { ...process.env, AGENT_ACCOUNTS_HOME: home };
   const cli = (args) => execFileSync("agent-account", args, { env, encoding: "utf8" });
   try {
-    cli(addArgs("cursor", "team", { label: "Team", tag: "work" }).args);
+    assert.equal(addedExisting(cli(addArgs("cursor", "team", { label: "Team", tag: "work" }).args)), false);
     let cursor = parseAccounts(cli(["list", "--json"]))[2];
     const team = cursor.accounts.find((a) => a.id === "team");
     assert.deepEqual([team.label, team.tag, team.state], ["Team", "work", "out"]);
@@ -219,6 +226,8 @@ test("the built commands work with agent-account", { skip: !hasCli && "agent-acc
     cursor = parseAccounts(cli(["list", "--json"]))[2];
     const after = cursor.accounts.find((a) => a.id === "team");
     assert.deepEqual([after.label, after.tag, after.active], ["Team 2", "", true]);
+    // add on an existing id doesn't fail: its output says the account exists.
+    assert.equal(addedExisting(cli(addArgs("cursor", "team", {}).args)), true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

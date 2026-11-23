@@ -187,3 +187,6 @@ export function editGhAccounts(fileText, { from = null, owner = null, login = nu
   return `${JSON.stringify(j, null, 2)}\n`;
 }
 
+// `agent-account add` on an id that exists doesn't fail: it keeps the account,
+// refreshes its links and applies the label and tag. Its first line says so.
+export const addedExisting = (stdout) => /^\S+ account '[^']*' exists:/m.test(stdout ?? "");
