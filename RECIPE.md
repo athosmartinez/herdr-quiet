@@ -109,7 +109,7 @@ Sub-agent names, statuses and the tree follow the shipped `agents` mod (`clean`,
 - The narrow rail (sidebar under 160px) puts the 16px status cell in the top-right corner of a 32×26px cell, over the space number. It is not tuned yet.
 - The accounts panel has no command palette entry: the palette lists app commands, and a mod can't add one. `mod.open` from the palette asks for the mod's name; a `keys.json` binding `"mod.open:quiet-accounts"` opens it at once.
 - The panel never runs `agent-account login` in the background: a login asks for a browser, a code or a hidden API key, so it gets a tab the person sees. It never offers `agent-account remove`.
-- `quiet.json` is written only when it still holds the text the panel read (`writeTextFile` with `expected`); after a change by hand the save fails, the panel reads the file again and asks to save once more. A file that is not valid JSON is shown as an error and left alone.
+- `quiet.json` is written only when it still holds the text the panel read (`writeTextFile` with `expected`); after a change by hand the save fails, the panel shows Herdr's reason, reads the file again and asks to save once more. A file that can't be read (permission, over 1 MiB) or is not valid JSON is shown as an error and left alone.
 - Herdr has four statuses. `done` already means "finished, unseen", so there is no separate unread marker.
 
 ## Done when

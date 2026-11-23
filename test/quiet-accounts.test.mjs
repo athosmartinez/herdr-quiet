@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
   parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting,
-  validGhName, firstLine, execError, accountIds,
+  validGhName, firstLine, execError, accountIds, configError,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -171,6 +171,14 @@ test("readGhAccounts keeps only valid owner → login pairs", () => {
   assert.deepEqual(readGhAccounts(""), { ok: true, map: {} });
   assert.equal(readGhAccounts("{ broken").ok, false);
   assert.equal(readGhAccounts("[1]").ok, false);
+});
+
+test("configError keeps the real reason of a quiet.json read or write", () => {
+  assert.equal(configError("read", new Error("Permission denied (os error 13)\nmore")), "quiet.json could not be read: Permission denied (os error 13)");
+  assert.equal(configError("written", new Error("The file changed outside Herdr. Reload before saving; your draft is still here.")),
+    "quiet.json could not be written: The file changed outside Herdr. Reload before saving; your draft is still here.");
+  assert.equal(configError("read", "Text file exceeds 1 MiB"), "quiet.json could not be read: Text file exceeds 1 MiB");
+  assert.equal(configError("written", undefined), "quiet.json could not be written: no reason given");
 });
 
 test("editGhAccounts changes one pair and keeps every other key and pair", () => {

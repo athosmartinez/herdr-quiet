@@ -9,7 +9,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
   parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError, accountIds,
+  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError, accountIds, configError,
 } from "./accounts.js";
 
 // A login runs in its own terminal: read again while the panel is open, so
@@ -96,11 +96,16 @@ export default class QuietAccounts extends View {
     });
   }
 
+  // A file that can't be read (permission, over 1 MiB) is an error like a
+  // broken one: the panel shows it and doesn't write.
   readConfig(cx) {
     cx.spawn(async (cx) => {
-      let text = null;
-      try { text = await readTextFile(this.configPath); } catch {}
-      this.config = { text, ...readGhAccounts(text) };
+      try {
+        const text = await readTextFile(this.configPath);
+        this.config = { text, ...readGhAccounts(text) };
+      } catch (e) {
+        this.config = { text: null, ok: false, error: configError("read", e) };
+      }
       cx.notify();
     });
   }
@@ -253,7 +258,10 @@ export default class QuietAccounts extends View {
   writeMap(change, cx) {
     if (this.busy) return;
     let next;
-    try { next = editGhAccounts(this.config.text, change); } catch (e) {
+    try {
+      if (!this.config.ok) throw new Error(this.config.error);
+      next = editGhAccounts(this.config.text, change);
+    } catch (e) {
       if (this.form) return this.fail(String(e?.message ?? e), cx);
       notify({ title: "quiet.json not changed", body: String(e?.message ?? e), level: "error" });
       return;
@@ -262,9 +270,9 @@ export default class QuietAccounts extends View {
     cx.spawn(async (cx) => {
       try {
         await writeTextFile(this.configPath, next, this.config.text ?? null);
-      } catch {
+      } catch (e) {
         this.readConfig(cx);
-        const msg = "quiet.json changed since the panel read it. It is read again: try once more.";
+        const msg = `${configError("written", e)}. It is read again: try once more.`;
         if (this.form) return this.fail(msg, cx);
         this.busy = false;
         notify({ title: "quiet.json not changed", body: msg, level: "warning" });

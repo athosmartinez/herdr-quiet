@@ -162,6 +162,12 @@ function parseConfig(fileText) {
   return { ok: true, j };
 }
 
+// A failed read or write of quiet.json, with the reason Herdr gave
+// (permission, size, a file changed since it was read).
+export function configError(action, e) {
+  return `quiet.json could not be ${action}: ${firstLine(String(e?.message ?? e ?? "")) || "no reason given"}`;
+}
+
 // The `gh_accounts` map of quiet.json ({ "<owner>": "<gh login>" }), only its
 // valid pairs. { ok: false } when the file is not a JSON object: the panel
 // then shows the error and never writes over it.
