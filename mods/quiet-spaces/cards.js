@@ -37,8 +37,8 @@ export function hover(id, trigger, content) {
   return HoverCard.new(id).open_delay(OPEN_MS).close_delay(CLOSE_MS).anchor("bottom_left").trigger(trigger).content(content);
 }
 
-function card(t) {
-  return v_flex().w(WIDTH).p(10).gap(7).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_lg()
+function card(t, width = WIDTH) {
+  return v_flex().w(width).p(10).gap(7).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_lg()
     .text_size(12).text_color(t.foreground);
 }
 
@@ -51,7 +51,7 @@ function heading(t, iconPath, text, color) {
 // A label and its value on one line: "Base   dev".
 function fact(t, label, value, color) {
   return h_flex().gap(8).items_center().min_w(0)
-    .child(div().w(72).flex_none().text_color(t.dim).child(label))
+    .child(div().w(84).flex_none().text_color(t.dim).child(label))
     .child(div().flex_1().min_w(0).truncate().text_color(color ?? t.muted).child(value));
 }
 
@@ -102,7 +102,7 @@ export function prCard(t, id, pr, look, iconPath) {
     .child(fact(t, "Branches", `${pr.head ?? "?"} → ${pr.base}`))
     .when(Boolean(pr.author), (el) => el.child(fact(t, "Author", `${pr.author}${pr.updatedAt ? ` · updated ${ago(pr.updatedAt)}` : ""}`)))
     .when(total > 0, (el) => el.child(h_flex().gap(8).items_center()
-      .child(div().w(72).flex_none().text_color(t.dim).child("Checks"))
+      .child(div().w(84).flex_none().text_color(t.dim).child("Checks"))
       .child(div().text_color(t.done).child(`✓ ${checks.pass}`))
       .when(checks.fail > 0, (r) => r.child(div().text_color(t.blocked).child(`✗ ${checks.fail}`)))
       .when(checks.pending > 0, (r) => r.child(div().text_color(t.working).child(`◌ ${checks.pending}`)))))
@@ -115,12 +115,30 @@ export function prCard(t, id, pr, look, iconPath) {
     )));
 }
 
+// The branch's tree, as `git log --graph` draws it: the graph in a mono font,
+// then for each commit its short hash, its refs, its subject and its age.
+// Lines with only graph (a merge's "|\") keep the branches joined.
+function tree(t, history) {
+  const mono = (text, color) => div().flex_none().font_family("JetBrains Mono").text_size(11.5).text_color(color)
+    .child(text.replace(/ /g, " "));
+  // Every graph cell padded to the widest one, so hashes line up.
+  const wide = Math.max(0, ...history.map((h) => h.graph.length));
+  return v_flex().gap(0).min_w(0).children(history.map((h) => h_flex().h(h.hash ? 20 : 12).gap(6).items_center().min_w(0)
+    .child(mono(h.graph.padEnd(wide).replace(/\*/g, "●"), t.accent))
+    .when(Boolean(h.hash), (el) => el
+      .child(mono(h.hash, t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(h.subject))
+      // Refs after the subject, so subjects line up.
+      .children(h.refs.slice(0, 2).map((r) => div().flex_none().px(4).rounded(4).bg(t.raised).text_size(10.5).text_color(t.muted).max_w(100).truncate().child(r)))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(h.at * 1000))))));
+}
+
 export function branchCard(t, id, g, iconPath) {
-  const c = g.commit;
-  return card(t)
+  const history = g.history ?? [];
+  return card(t, 420)
     .child(heading(t, iconPath, g.branch ?? "detached"))
-    .when(Boolean(c), (el) => el.child(fact(t, "Last commit", c.subject, t.foreground))
-      .child(fact(t, "", `${c.author} · ${ago(c.at * 1000)}`)))
+    .when(history.length > 0, (el) => el.child(tree(t, history)))
+    .when(Boolean(g.commit?.author), (el) => el.child(fact(t, "Last author", g.commit.author)))
     .child(fact(t, "Upstream", g.upstream ? `${g.upstream}${g.ahead || g.behind ? ` · ↑${g.ahead} ↓${g.behind}` : " · in sync"}` : "none"))
     .child(fact(t, "Uncommitted", g.dirty == null ? "unknown" : g.dirty === 0 ? "clean" : `${g.dirty} file${g.dirty === 1 ? "" : "s"}`, g.dirty ? t.blocked : t.muted))
     .child(actions(button(t, `${id}-copy`, "Copy branch", (cx) => cx.write_to_clipboard(g.branch ?? ""))));

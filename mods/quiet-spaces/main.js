@@ -61,6 +61,8 @@ const ICON = (name) => `mods/quiet-spaces/icons/${name}.svg`;
 // A pull request is looked up again at most this often for the same branch.
 // The branch changing, or the space becoming the active one, asks sooner.
 const PR_EVERY = 120000;
+// Commits the branch card draws in its tree.
+const HISTORY = 6;
 const RAIL_CELL = 32;
 // A space's name and its git tail never shrink below this, so a short one ("api")
 // stays readable instead of turning into an ellipsis next to a long branch.
@@ -99,6 +101,18 @@ export function statusGlyph(t, status) {
   if (status === "done") return cell(svg("mods/workspace-chrome/check.svg").size(13).text_color(t.done));
   if (status === "idle") return cell(div().size(7).rounded(4).border(1.5).border_color(t.idle ?? t.dim));
   return cell(div());
+}
+
+// The format `git log --graph` prints with HISTORY_FORMAT, one line each:
+// the graph drawing, then (on commit lines) hash, subject, author, time, refs.
+const HISTORY_FORMAT = "--format=%x1f%h%x1f%s%x1f%an%x1f%ct%x1f%D";
+export function graphLog(text) {
+  return text.split("\n").filter((l) => l.trim()).map((line) => {
+    const i = line.indexOf("\x1f");
+    if (i < 0) return { graph: line.trimEnd() };
+    const [hash, subject, author, at, refs] = line.slice(i + 1).split("\x1f");
+    return { graph: line.slice(0, i).trimEnd(), hash, subject, author, at: Number(at), refs: (refs ?? "").replace(/^HEAD -> /, "").split(", ").filter(Boolean) };
+  });
 }
 
 // `git diff --numstat` ("82\t14\tpath", "-\t-\tbinary") -> the totals, the file
@@ -339,7 +353,8 @@ export default class Spaces extends View {
       // core's 16 running execs.
       const [diff, log] = await Promise.all([
         this.diff(pr, on, cwd),
-        exec("git", ["log", "-1", "--format=%s%x1f%an%x1f%ct"], { cwd, on, timeout: 10000 }).catch(() => null),
+        // The branch's tree: the last HISTORY commits, with merges drawn as branches.
+        exec("git", ["log", "--graph", `-n${HISTORY}`, HISTORY_FORMAT], { cwd, on, timeout: 10000 }).catch(() => null),
       ]);
       const [up, dirty] = await Promise.all([
         exec("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], { cwd, on, timeout: 10000 }).catch(() => null),
@@ -347,8 +362,8 @@ export default class Spaces extends View {
         exec("git", ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"], { cwd, on, timeout: 15000 }).catch(() => null),
       ]);
       info.diff = diff;
-      const [subject, author, at] = log?.code === 0 ? log.stdout.trim().split("\x1f") : [];
-      info.commit = subject ? { subject, author, at: Number(at) } : null;
+      info.history = log?.code === 0 ? graphLog(log.stdout) : [];
+      info.commit = info.history.find((h) => h.hash) ?? null;
       info.upstream = up?.code === 0 ? up.stdout.trim() : null;
       info.dirty = dirty?.code === 0 ? dirty.stdout.split("\n").filter(Boolean).length : null;
       this.git[key] = info;
