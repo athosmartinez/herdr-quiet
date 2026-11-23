@@ -101,13 +101,15 @@ function newest(readings) {
 }
 
 // What the bar shows for one provider ("claude" | "codex" | "cursor"), or
-// null for nothing: { reading, label, accounts }.
+// null for nothing: { reading, label, accounts, managed }.
 // - `reading`: the active account's last reading, or null (always for
 //   Cursor, which saves no usage limits);
 // - `label`: the active account's label, only when there are several;
 // - `accounts`: every account, only when there are several, each
 //   { id, label, tag, email, loggedIn, active, reading }. `id` is what
-//   `agent-account use` takes; `label` is for people and falls back to it.
+//   `agent-account use` takes; `label` is for people and falls back to it;
+// - `managed`: `agent-account` listed this provider, also with one account,
+//   so the card can open the accounts panel.
 // Without `agent-account` there is one unlabeled reading, the newest one.
 export function providerState(parsed, key) {
   const list = parsed?.accounts?.[key];
@@ -115,8 +117,9 @@ export function providerState(parsed, key) {
   const fallback = key === "claude"
     ? claudeReading(parsed, "default") ?? newest(Object.values(parsed?.claude ?? {}))
     : key === "codex" ? newest((parsed?.codex ?? []).map((c) => c.reading)) : null;
-  if (!Array.isArray(list?.accounts) || list.accounts.length === 0) {
-    return fallback ? { reading: fallback, label: null, accounts: [] } : null;
+  const managed = Array.isArray(list?.accounts);
+  if (!managed || list.accounts.length === 0) {
+    return fallback ? { reading: fallback, label: null, accounts: [], managed } : null;
   }
   const idOf = (a) => a.id ?? a.name;
   const ids = list.accounts.map(idOf);
@@ -142,10 +145,10 @@ export function providerState(parsed, key) {
     // whose id is unknown takes the newest one.
     const own = accounts[0].reading;
     const reading = own ?? (key === "codex" && !list.accounts[0].account_id ? fallback : null);
-    return reading ? { reading, label: null, accounts: [] } : null;
+    return reading ? { reading, label: null, accounts: [], managed } : null;
   }
   const active = accounts.find((a) => a.active) ?? accounts[0];
-  return { reading: active.reading, label: active.label, accounts };
+  return { reading: active.reading, label: active.label, accounts, managed };
 }
 
 // How far the spending runs ahead of the clock, in points of percent: 0 is on

@@ -7,7 +7,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, HoverCard } from "gpui-base";
-import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify } from "herdr";
+import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify, openOverlay } from "herdr";
 import { READ, STALE_MS, parseRead, providerState, pace, level, runway } from "./usage.js";
 
 const READ_MS = 60000;
@@ -209,6 +209,21 @@ export default class QuietStatus extends View {
         .text_size(11).text_color(t.dim).tooltip(note).child(note)));
   }
 
+  // The last row of the Accounts section: opens the quiet-accounts panel for
+  // the bar's machine (rename, tag, create and log in to accounts).
+  manage(t) {
+    const machine = this.machine;
+    return h_flex().id("manage-accounts").px(6).py(4).gap(6).items_center().rounded(5).cursor_pointer()
+      .text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        openOverlay({ mod: "quiet-accounts", kind: "window", key: "quiet-accounts", width: 600, height: 640, props: { machine } });
+      })
+      .child(div().w(14).flex_none().child(svg("mods/workspace-chrome/settings.svg").size(12)))
+      .child("Manage accounts…");
+  }
+
   card(t, provider, s, now) {
     const u = s.reading;
     const fact = (label, value, color) => h_flex().gap(8).items_center().min_w(0)
@@ -240,6 +255,11 @@ export default class QuietStatus extends View {
       rows.push(section("Accounts"));
       rows.push(v_flex().children(s.accounts.map((a) => this.account(t, provider, a, now))));
       rows.push(div().text_size(11).text_color(t.dim).child("Click an account to use it in new sessions."));
+      rows.push(this.manage(t));
+    } else if (s.managed) {
+      // One account: no list to switch, but the panel can add another.
+      rows.push(section("Accounts"));
+      rows.push(this.manage(t));
     }
     const what = provider.limits ? `${provider.name} usage limits` : `${provider.name} accounts`;
     const title = s.label ? `${what} · ${s.label}` : what;

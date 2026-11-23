@@ -1,0 +1,212 @@
+// Parsing and command building for the accounts panel. Nothing in this file
+// touches Herdr, so plain `node` can test it (test/quiet-accounts.test.mjs).
+
+export const PROVIDERS = [
+  { key: "claude", name: "Claude" },
+  { key: "codex", name: "Codex" },
+  { key: "cursor", name: "Cursor" },
+];
+
+const isProvider = (key) => PROVIDERS.some((p) => p.key === key);
+const text = (v) => (typeof v === "string" ? v : "");
+const isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+
+export const firstLine = (s) => (s ?? "").trim().split("\n", 1)[0];
+
+// Why a program did not run on a machine. exec rejects when the program can't
+// start ("cannot start gh: program not found"), but also when the machine is
+// unreachable or a folder is missing: only a missing program (or exit code
+// 127, the shell's "command not found") reads as "not installed".
+export function execError(program, where, e) {
+  const message = firstLine(String(e?.message ?? e ?? ""));
+  if (e?.code === 127 || /program not found|command not found|ENOENT/i.test(message)) return `${program} is not installed on ${where}`;
+  return `${program} could not run on ${where}: ${message || "no reason given"}`;
+}
+
+// `agent-account list --json` as one group per provider, always all three and
+// in PROVIDERS order, so an account can be added to a provider with none yet.
+// Each account: { id, label (the id when it has none), tag, email, plan,
+// state: "in" | "out" | "unknown" (the CLI's null: Cursor keeps its own login
+// where the CLI can't see it), active }. Null when the text is not a list.
+export function parseAccounts(stdout) {
+  let j;
+  try { j = JSON.parse(stdout); } catch { return null; }
+  if (!isObject(j)) return null;
+  return PROVIDERS.map((p) => {
+    const g = isObject(j[p.key]) ? j[p.key] : {};
+    const active = text(g.active) || "default";
+    const list = Array.isArray(g.accounts) ? g.accounts.filter((a) => isObject(a) && text(a.id)) : [];
+    if (!list.some((a) => a.id === "default")) list.unshift({ id: "default", logged_in: null });
+    const accounts = list.map((a) => ({
+      id: a.id,
+      label: text(a.label) || a.id,
+      tag: text(a.tag),
+      email: text(a.email),
+      plan: text(a.plan),
+      state: a.logged_in === true ? "in" : a.logged_in === false ? "out" : "unknown",
+      active: a.id === active,
+    }));
+    return { key: p.key, name: p.name, active, accounts };
+  });
+}
+
+// The ids of one provider's accounts in `agent-account list --json`, or null
+// when the text is not a list: then an add can't tell if the id exists.
+export function accountIds(stdout, provider) {
+  return parseAccounts(stdout)?.find((g) => g.key === provider)?.accounts.map((a) => a.id) ?? null;
+}
+
+// agent-account's id rule: lowercase letters, digits, ".", "_" and "-",
+// starting with a letter or a digit, at most 32; "default" is the normal home,
+// "active" and "accounts.json" are registry files.
+export function validId(id) {
+  if (["default", "active", "accounts.json"].includes(id)) return false;
+  return /^[a-z0-9][a-z0-9._-]{0,31}$/.test(id ?? "");
+}
+
+// `agent-account add <provider> <id>`, and the `set` that gives it the label
+// and tag (null when both are blank): { args, set } or { error } for the form.
+// The add has no --label or --tag: on an id that exists, add keeps that
+// account and would change its label and tag, so the set runs only after the
+// add's output says the account was created (addedExisting false).
+export function addArgs(provider, id, { label, tag } = {}) {
+  if (!isProvider(provider)) return { error: `unknown provider "${provider}"` };
+  const name = (id ?? "").trim();
+  if (name === "default") return { error: "default already exists: it is the normal home" };
+  if (!validId(name)) return { error: "Id: lowercase letters, digits, \".\", \"_\" and \"-\", at most 32" };
+  return { args: ["add", provider, name], set: setArgs(provider, { id: name, label: "", tag: "" }, { label, tag }) };
+}
+
+// `agent-account set <provider> <id> --label .. --tag ..` with only the fields
+// that changed (an empty one clears it), or null when nothing changed. Exec
+// passes each value as one argument, so no shell quoting is needed.
+export function setArgs(provider, account, { label, tag }) {
+  const args = ["set", provider, account.id];
+  const l = (label ?? "").trim();
+  const t = (tag ?? "").trim();
+  if (l !== account.label) args.push("--label", l);
+  if (t !== account.tag) args.push("--tag", t);
+  return args.length > 3 ? args : null;
+}
+
+export const useArgs = (provider, id) => ["use", provider, id];
+
+// The login is interactive (a browser, a code, or a hidden API key for
+// Cursor), so it runs in a terminal the person sees, never in the background.
+export const loginArgv = (provider, id) => ["agent-account", "login", provider, id];
+export const loginCommand = (provider, id) => loginArgv(provider, id).join(" ");
+
+// A GitHub owner or login: letters, digits and "-" (what quiet-spaces accepts).
+export const validGhName = (s) => /^[A-Za-z0-9-]+$/.test(s ?? "");
+
+const byHost = (a, b) => (a.host === b.host ? Number(b.active) - Number(a.active) : 0);
+
+// `gh auth status --json hosts`: [{ host, login, active, ok }], the active
+// account of each host first. Only these fields leave: never a token.
+export function parseGhStatus(stdout) {
+  let j;
+  try { j = JSON.parse(stdout); } catch { return null; }
+  if (!isObject(j?.hosts)) return null;
+  const out = [];
+  for (const [host, list] of Object.entries(j.hosts)) {
+    for (const a of Array.isArray(list) ? list : []) {
+      if (!isObject(a) || !text(a.login)) continue;
+      out.push({ host: text(a.host) || host, login: a.login, active: a.active === true, ok: a.state === "success" });
+    }
+  }
+  return out.sort(byHost);
+}
+
+// The plain `gh auth status` of a gh without `--json`: "✓ Logged in to <host>
+// account <login> (...)" or "X Failed to log in to <host> account <login>",
+// then "- Active account: true|false". A gh older than 2.40 says "as <login>"
+// and has one account per host, so an entry without that line is active.
+export function parseGhStatusText(stdout) {
+  const out = [];
+  for (const line of (stdout ?? "").split("\n")) {
+    const m = line.match(/(Logged in|Failed to log in) to (\S+) (?:account|as) ([A-Za-z0-9-]+)/);
+    if (m) {
+      out.push({ host: m[2], login: m[3], active: null, ok: m[1] === "Logged in" });
+      continue;
+    }
+    const act = line.match(/Active account:\s*(true|false)/);
+    if (act && out.length) out[out.length - 1].active = act[1] === "true";
+  }
+  return out.map((a) => ({ ...a, active: a.active ?? true })).sort(byHost);
+}
+
+// gh refuses a flag it doesn't know (`--json`, `--no-refresh` on an old gh).
+export const flagRejected = (out) => /unknown (?:shorthand )?flag|flag provided but not defined/i.test(out ?? "");
+
+// The result of a plain `gh auth status` run: { list } or { error }. "Not
+// logged in" is an empty list; any other failure that names no login is the
+// error gh printed, so it never reads as "no accounts".
+export function ghStatusFromText(code, stdout, stderr) {
+  const all = `${stdout ?? ""}\n${stderr ?? ""}`;
+  const list = parseGhStatusText(all);
+  if (list.length) return { list };
+  if (/not logged in/i.test(all)) return { list: [] };
+  if (code === 0) return { list: [] };
+  return { error: firstLine(stderr) || firstLine(stdout) || `gh exited with ${code}` };
+}
+
+// quiet.json as an object, or an error: { ok, j } | { ok: false, error }.
+function parseConfig(fileText) {
+  if (!fileText || !fileText.trim()) return { ok: true, j: {} };
+  let j;
+  try { j = JSON.parse(fileText); } catch (e) { return { ok: false, error: `quiet.json is not valid JSON: ${firstLine(e?.message)}` }; }
+  if (!isObject(j)) return { ok: false, error: "quiet.json is not a JSON object" };
+  if (j.gh_accounts !== undefined && !isObject(j.gh_accounts)) return { ok: false, error: "gh_accounts in quiet.json is not an object" };
+  return { ok: true, j };
+}
+
+// A failed read or write of quiet.json, with the reason Herdr gave
+// (permission, size, a file changed since it was read).
+export function configError(action, e) {
+  return `quiet.json could not be ${action}: ${firstLine(String(e?.message ?? e ?? "")) || "no reason given"}`;
+}
+
+// The `gh_accounts` map of quiet.json ({ "<owner>": "<gh login>" }), only its
+// valid pairs. { ok: false } when the file is not a JSON object: the panel
+// then shows the error and never writes over it.
+export function readGhAccounts(fileText) {
+  const c = parseConfig(fileText);
+  if (!c.ok) return { ok: false, error: c.error };
+  const map = {};
+  for (const [owner, login] of Object.entries(c.j.gh_accounts ?? {})) {
+    if (validGhName(owner) && typeof login === "string" && validGhName(login)) map[owner] = login;
+  }
+  return { ok: true, map };
+}
+
+// quiet.json with one change to `gh_accounts`, every other key and every
+// other pair kept as written (also pairs the panel doesn't show). `from`: the
+// key the form edited, removed; `owner` and `login`: the pair to set, or no
+// owner to only remove `from`. The owner is saved in lowercase, because
+// quiet-spaces looks up the owner of the origin URL as written, then in
+// lowercase; other keys that differ only in case are removed, so an old one
+// can't win. An empty map removes the key. Throws on a broken file or an
+// invalid pair, so nothing is written then.
+export function editGhAccounts(fileText, { from = null, owner = null, login = null }) {
+  const key = owner == null ? null : owner.trim().toLowerCase();
+  if (key != null) {
+    if (!validGhName(key)) throw new Error(`"${owner}" is not a GitHub owner name`);
+    if (!validGhName(login)) throw new Error(`"${login}" is not a GitHub login`);
+  }
+  const c = parseConfig(fileText);
+  if (!c.ok) throw new Error(c.error);
+  const j = c.j;
+  const map = { ...(j.gh_accounts ?? {}) };
+  if (from != null) delete map[from];
+  if (key != null) {
+    for (const k of Object.keys(map)) if (k.toLowerCase() === key) delete map[k];
+    map[key] = login;
+  }
+  if (Object.keys(map).length) j.gh_accounts = map;
+  else delete j.gh_accounts;
+  return `${JSON.stringify(j, null, 2)}\n`;
+}
+
+// `agent-account add` on an id that exists doesn't fail: it keeps the account,
+// refreshes its links and applies the label and tag. Its first line says so.
+export const addedExisting = (stdout) => /^\S+ account '[^']*' exists:/m.test(stdout ?? "");

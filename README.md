@@ -13,7 +13,7 @@ Ask your Herdr agent to add `github.com/athosmartinez/herdr-quiet`, or copy by h
 ```sh
 cp layouts/quiet.json ~/.config/herdr-app/layouts/
 cp themes/quiet-*.json ~/.config/herdr-app/themes/
-cp -R mods/quiet-spaces mods/quiet-agents mods/quiet-status ~/.config/herdr-app/mods/
+cp -R mods/quiet-spaces mods/quiet-agents mods/quiet-status mods/quiet-accounts ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/quiet-spaces
 herdr-app do layout.switch --name quiet
 ```
@@ -33,6 +33,8 @@ PRs in the sidebar need [`gh`](https://cli.github.com) logged in on each machine
 ```
 
 For a repo whose `origin` is under `my-company`, Quiet runs that one `gh pr view` with `gh auth token --user my-work-login`. The token stays in that command's environment and is never written anywhere.
+
+The [accounts panel](#the-accounts-panel) edits this map for you and lists the accounts that `gh` has logged in.
 
 ### Other options in `quiet.json`
 
@@ -93,6 +95,24 @@ With [`agent-account`](https://github.com/athosmartinez/terminal-tools) from ter
 
 An idle account shows its last saved reading: Claude saves one per account through the statusline snippet above, and Codex sessions say which ChatGPT account wrote them. Without `agent-account`, the bar shows one reading per agent, as above.
 
+### The accounts panel
+
+A window to manage the accounts, for the machine that the status bar names. Open it with **Manage accounts…** at the end of the Accounts section of an agent's card (with one account, the section has only that row), or with the `mod.open` command and the name `quiet-accounts`. Mods can't add their own entry to the command palette, so bind a key to it in `keys.json` if you want one:
+
+```json
+{ "global": { "<your key>": "mod.open:quiet-accounts" } }
+```
+
+- **Agent accounts** (needs `agent-account`): each Claude, Codex and Cursor account with its label, tag and email, and a check on the active one.
+  - **Use** runs `agent-account use <agent> <id>`: new sessions use that account, and running sessions keep theirs.
+  - **Edit** changes the label and the tag (`agent-account set`). An empty field clears it.
+  - **Add account** creates one (`agent-account add <agent> <id>`, then `agent-account set` for the label and tag, only when the add made a new account). The id takes lowercase letters, digits, `.`, `_` and `-`.
+  - An account that is not logged in shows `agent-account login <agent> <id>` and a **Log in** button. The button opens a new tab that runs that command, because the login asks you for a browser, a code or an API key. Nothing logs in out of your sight.
+  - The panel can't remove an account. Run `agent-account remove` in a terminal for that.
+- **GitHub accounts**: the accounts logged in to `gh` on that machine (`gh auth status`, read-only), the active one checked. Under them, the `gh_accounts` map of `quiet.json`: map an owner to a login (pick one of the logged-in logins or type it), edit it, or unmap it. The owner is saved in lowercase, which matches its `origin` in any case. The panel writes only the pair you change and keeps the other keys of the file and the other pairs, also ones it can't show. When `gh` fails, the panel shows its error, not an empty list. It doesn't write a file that it can't read or that is not valid JSON (it shows the reason), or one that changed after the panel read it.
+
+Esc closes the open form, then the panel. The panel reads the accounts again every 15 seconds while it is open, so a login in the new tab shows without a click.
+
 ### Orchestrating agents
 
 - **Needs you:** when an agent anywhere waits for you, a row appears above the spaces. A click goes to the next waiting agent; resting on it lists them all with what each one asks.
@@ -108,6 +128,8 @@ An idle account shows its last saved reading: Claude saves one per account throu
 If `mods/quiet-spaces` is a symlink into a clone, Herdr may not notice edits made in the clone. Switch layouts (`herdr-app do layout.switch --name main`, then `--name quiet`) to load the new code, and check it with `herdr-app check`.
 
 The status bar's readers are plain functions in `mods/quiet-status/usage.js`. Test them with `node test/quiet-status.test.mjs` (it runs the reader against a fake home).
+
+The accounts panel's parsing and commands are in `mods/quiet-accounts/accounts.js`. `node --test test/` runs all tests; the panel's tests run `agent-account` against a temporary registry (`AGENT_ACCOUNTS_HOME`), never your accounts.
 
 ## Credits
 
