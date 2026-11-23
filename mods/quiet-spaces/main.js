@@ -104,14 +104,14 @@ export function statusGlyph(t, status) {
 }
 
 // The format `git log --graph` prints with HISTORY_FORMAT, one line each:
-// the graph drawing, then (on commit lines) hash, subject, author, time, refs.
-const HISTORY_FORMAT = "--format=%x1f%h%x1f%s%x1f%an%x1f%ct%x1f%D";
+// the graph drawing, then (on commit lines) short hash, full SHA, subject, author, time, refs.
+const HISTORY_FORMAT = "--format=%x1f%h%x1f%H%x1f%s%x1f%an%x1f%ct%x1f%D";
 export function graphLog(text) {
   return text.split("\n").filter((l) => l.trim()).map((line) => {
     const i = line.indexOf("\x1f");
     if (i < 0) return { graph: line.trimEnd() };
-    const [hash, subject, author, at, refs] = line.slice(i + 1).split("\x1f");
-    return { graph: line.slice(0, i).trimEnd(), hash, subject, author, at: Number(at), refs: (refs ?? "").replace(/^HEAD -> /, "").split(", ").filter(Boolean) };
+    const [hash, sha, subject, author, at, refs] = line.slice(i + 1).split("\x1f");
+    return { graph: line.slice(0, i).trimEnd(), hash, sha, subject, author, at: Number(at), refs: (refs ?? "").replace(/^HEAD -> /, "").split(", ").filter(Boolean) };
   });
 }
 

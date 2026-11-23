@@ -118,15 +118,38 @@ export function prCard(t, id, pr, look, iconPath) {
 // The branch's tree, as `git log --graph` draws it: the graph in a mono font,
 // then for each commit its short hash, its refs, its subject and its age.
 // Lines with only graph (a merge's "|\") keep the branches joined.
-function tree(t, history) {
+// The last copied SHA and when, shared by every card, so the hash that was
+// clicked shows "copied" for a moment.
+let copied = { sha: null, at: 0 };
+const COPIED_MS = 1500;
+
+function tree(t, id, history) {
+  // The short hash is a button: a click copies the full SHA (for git revert,
+  // reset or checkout) and the hash reads "copied" for COPIED_MS.
+  const hashButton = (h, i) => {
+    const done = copied.sha === h.sha && Date.now() - copied.at < COPIED_MS;
+    return div().id(`${id}-sha${i}`).flex_none().px(3).rounded(4).cursor_pointer()
+      .font_family("JetBrains Mono").text_size(11.5).text_color(done ? t.done : t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`Copy ${h.sha}`)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        cx.write_to_clipboard(h.sha ?? h.hash);
+        copied = { sha: h.sha, at: Date.now() };
+        cx.notify();
+        cx.timer.after(COPIED_MS + 50, (cx) => cx.notify());
+      })
+      .child(done ? "copied" : h.hash);
+  };
   const mono = (text, color) => div().flex_none().font_family("JetBrains Mono").text_size(11.5).text_color(color)
     .child(text.replace(/ /g, " "));
   // Every graph cell padded to the widest one, so hashes line up.
   const wide = Math.max(0, ...history.map((h) => h.graph.length));
-  return v_flex().gap(0).min_w(0).children(history.map((h) => h_flex().h(h.hash ? 20 : 12).gap(6).items_center().min_w(0)
+  return v_flex().gap(0).min_w(0).children(history.map((h, i) => h_flex().h(h.hash ? 20 : 12).gap(6).items_center().min_w(0)
     .child(mono(h.graph.padEnd(wide).replace(/\*/g, "●"), t.accent))
     .when(Boolean(h.hash), (el) => el
-      .child(mono(h.hash, t.dim))
+      .child(hashButton(h, i))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(h.subject))
       // Refs after the subject, so subjects line up.
       .children(h.refs.slice(0, 2).map((r) => div().flex_none().px(4).rounded(4).bg(t.raised).text_size(10.5).text_color(t.muted).max_w(100).truncate().child(r)))
@@ -137,7 +160,7 @@ export function branchCard(t, id, g, iconPath) {
   const history = g.history ?? [];
   return card(t, 420)
     .child(heading(t, iconPath, g.branch ?? "detached"))
-    .when(history.length > 0, (el) => el.child(tree(t, history)))
+    .when(history.length > 0, (el) => el.child(tree(t, id, history)))
     .when(Boolean(g.commit?.author), (el) => el.child(fact(t, "Last author", g.commit.author)))
     .child(fact(t, "Upstream", g.upstream ? `${g.upstream}${g.ahead || g.behind ? ` · ↑${g.ahead} ↓${g.behind}` : " · in sync"}` : "none"))
     .child(fact(t, "Uncommitted", g.dirty == null ? "unknown" : g.dirty === 0 ? "clean" : `${g.dirty} file${g.dirty === 1 ? "" : "s"}`, g.dirty ? t.blocked : t.muted))

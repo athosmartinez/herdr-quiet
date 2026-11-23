@@ -70,7 +70,7 @@ Hover cards (`cards.js`): resting 600ms on a part opens a 320px card below it (`
 | Part | Card | Actions |
 |---|---|---|
 | PR | `#n title`, state, `head → base`, author and last update, checks (✓ pass, ✗ fail, ◌ pending), latest reviews, requested reviewers, conflicts | Open on GitHub, Copy URL |
-| Branch (420px card) | the branch tree from `git log --graph -n6`: the graph in JetBrains Mono (`●` commits in `accent`, merges drawn as branches), then short hash, subject, up to 2 refs and age per commit; last author, upstream with ↑↓, uncommitted file count | Copy branch |
+| Branch (420px card) | the branch tree from `git log --graph -n6`: the graph in JetBrains Mono (`●` commits in `accent`, merges drawn as branches), then short hash, subject, up to 2 refs and age per commit; last author, upstream with ↑↓, uncommitted file count | Copy branch; click a hash: copies the full SHA (tooltip shows it), and the hash reads `copied` in `done` for 1.5s |
 | Diff | file count, the 5 files that changed most with `+/−`, what it is compared against | Open Changes (after a space switch it waits 300ms for the `tabs` mod to restore that space's panel, then opens Changes) |
 | Bot count | each live sub-agent: program icon, name, status word and age, what it reports | click a line: `agent.focus` |
 | Status | the space's agents, most urgent first, same lines | click a line: `agent.focus` |
