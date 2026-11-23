@@ -124,23 +124,30 @@ export default class QuietAccounts extends View {
   }
 
   open(form, first, cx) {
-    this.close();
+    this.close(cx);
     this.form = { error: null, ...form };
     this.form.inputs[first].focus();
     cx.notify();
   }
 
-  close() {
+  // Gives the keyboard back to the panel, so Esc still reaches it, and
+  // releases the form's inputs once the handler that closed it has returned.
+  close(cx) {
+    const states = Object.values(this.form?.inputs ?? {});
     this.form = null;
     this.focusedInput = null;
+    this.handle.focus();
+    if (states.length) cx.timer.after(0, () => { for (const st of states) { try { st.release(); } catch {} } });
   }
 
   value(name) {
     return this.form?.inputs[name]?.value() ?? "";
   }
 
+  // The error goes to the open form, or to a toast when no form is open.
   fail(message, cx) {
     if (this.form) this.form.error = message;
+    else notify({ title: "Accounts: not done", body: message, level: "error" });
     this.busy = false;
     cx.notify();
   }
@@ -170,13 +177,13 @@ export default class QuietAccounts extends View {
 
   edit(f, cx) {
     const args = setArgs(f.provider.key, f.account, { label: this.value("label"), tag: this.value("tag") });
-    if (!args) { this.close(); cx.notify(); return; }
+    if (!args) { this.close(cx); cx.notify(); return; }
     this.busy = true;
     cx.spawn(async (cx) => {
       const r = await this.cli(args);
       if (r.code !== 0) return this.fail(firstLine(r.stderr) || `agent-account exited with ${r.code}`, cx);
       this.busy = false;
-      this.close();
+      this.close(cx);
       this.readAccounts(cx);
       cx.notify();
     });
@@ -202,7 +209,7 @@ export default class QuietAccounts extends View {
         return this.fail(`${id} already existed: agent-account kept it and set the label and tag given`, cx);
       }
       this.busy = false;
-      this.close();
+      this.close(cx);
       notify({ title: `${f.provider.name} account ${id} created`, body: "Log in to it to use it.", level: "success", timeout: 5000 });
       this.readAccounts(cx);
       cx.notify();
@@ -260,7 +267,7 @@ export default class QuietAccounts extends View {
         return;
       }
       this.busy = false;
-      this.close();
+      this.close(cx);
       this.readConfig(cx);
       cx.notify();
     });
@@ -271,7 +278,9 @@ export default class QuietAccounts extends View {
   key(e, cx) {
     if (e.key !== "escape") return;
     cx.stop_propagation();
-    if (this.form) { this.close(); this.handle.focus(); cx.notify(); return; }
+    // While a call runs, the form stays: its result (an error) lands there.
+    if (this.form && this.busy) return;
+    if (this.form) { this.close(cx); cx.notify(); return; }
     closeOverlay(props().overlay);
   }
 
@@ -309,7 +318,7 @@ export default class QuietAccounts extends View {
       .child(h_flex().gap(6).items_center().min_w(0)
         .children(fields.map(([name, width]) => this.field(t, name, width)))
         .child(this.button(t, "form-save", saveLabel, (cx) => this.submit(cx), true))
-        .child(this.button(t, "form-cancel", "Cancel", (cx) => { this.close(); cx.notify(); })))
+        .child(this.button(t, "form-cancel", "Cancel", (cx) => { this.close(cx); cx.notify(); })))
       .when(Boolean(f.error), (el) => el.child(div().text_size(11).text_color(t.blocked).child(f.error)))
       .when(!f.error && Boolean(hint), (el) => el.child(div().text_size(11).text_color(t.dim).child(hint)));
   }
