@@ -226,6 +226,9 @@ test("the built commands work with agent-account", { skip: !hasCli && "agent-acc
     cursor = parseAccounts(cli(["list", "--json"]))[2];
     const after = cursor.accounts.find((a) => a.id === "team");
     assert.deepEqual([after.label, after.tag, after.active], ["Team 2", "", true]);
+    // A label that starts with "-" is the value of --label, not an option.
+    cli(setArgs("cursor", after, { label: "-x", tag: "" }));
+    assert.equal(parseAccounts(cli(["list", "--json"]))[2].accounts.find((a) => a.id === "team").label, "-x");
     // add on an existing id doesn't fail: its output says the account exists.
     assert.equal(addedExisting(cli(addArgs("cursor", "team", {}).args)), true);
   } finally {
