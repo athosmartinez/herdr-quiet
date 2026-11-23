@@ -3,11 +3,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, utimesSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { READ, parseRead, providerState, parseCursor, pace, level, windowName } from "../mods/quiet-status/usage.js";
+import { READ, CURSOR_USAGE, parseRead, providerState, parseCursor, parseCursorUsage, withRead, withCursor, pace, level, windowName } from "../mods/quiet-status/usage.js";
 
 const NOW = Date.parse("2030-01-01T12:00:00Z");
 const S = NOW / 1000;
@@ -270,24 +270,58 @@ test("parseCursor: one billing-period window with spent and limit in USD", () =>
   assert.equal(parseCursor(cursorItem("x", { resets_at: new Date(NOW - 1000).toISOString() }), NOW).windows[0].used, null);
 });
 
-test("parseRead keeps one Cursor reading per account; an error account has none", () => {
-  const p = parseRead(`accounts\t${JSON.stringify(LIST)}\ncursor\t${JSON.stringify(USAGE)}`, NOW);
-  assert.deepEqual(Object.keys(p.cursor), ["default"]);
-  const k = providerState(p, "cursor");
+// The state after a READ and a Cursor read that printed `usage`.
+const ok = (stdout) => ({ code: 0, stdout, stderr: "" });
+const withUsage = (readOut, usage) => withCursor(withRead(undefined, parseRead(readOut, NOW), NOW), ok(JSON.stringify(usage)), NOW);
+
+test("parseCursorUsage keeps one Cursor reading per account; an error account has none", () => {
+  const c = parseCursorUsage(JSON.stringify(USAGE), NOW);
+  assert.deepEqual(Object.keys(c), ["default"]);
+  const k = providerState(withUsage(`accounts\t${JSON.stringify(LIST)}`, USAGE), "cursor");
   assert.equal(k.label, "alice");
   assert.equal(k.reading.windows[0].used, 42.5);
   assert.deepEqual(k.accounts.map((a) => [a.id, a.reading?.windows[0].used ?? null]), [["default", 42.5], ["ci", null]]);
-  // Not a list (an old agent-account that printed something else): ignored.
-  assert.deepEqual(Object.keys(parseRead(`cursor\t{"error":"x"}\ncursor\tnot json`, NOW).cursor), []);
+  // Not a list (an old agent-account that printed something else): no readings.
+  assert.equal(parseCursorUsage('{"error":"x"}', NOW), null);
+  assert.equal(parseCursorUsage("Usage: agent-account <command>", NOW), null);
+  assert.equal(parseCursorUsage("", NOW), null);
 });
 
 test("Cursor with one account shows when it has a reading", () => {
   const one = { cursor: { active: "default", accounts: [account("default", "alice", null, { logged_in: null })] } };
-  const k = providerState(parseRead(`accounts\t${JSON.stringify(one)}\ncursor\t${JSON.stringify([cursorItem("default")])}`, NOW), "cursor");
+  const k = providerState(withUsage(`accounts\t${JSON.stringify(one)}`, [cursorItem("default")]), "cursor");
   assert.deepEqual([k.label, k.accounts.length, k.managed, k.reading.windows[0].used], [null, 0, true, 42.5]);
   // An error account alone shows nothing, as before.
-  const err = parseRead(`accounts\t${JSON.stringify(one)}\ncursor\t${JSON.stringify([{ ...USAGE[1], id: "default" }])}`, NOW);
+  const err = withUsage(`accounts\t${JSON.stringify(one)}`, [{ ...USAGE[1], id: "default" }]);
   assert.equal(providerState(err, "cursor"), null);
+});
+
+test("a failed or slow Cursor read never erases the other readings, and keeps the last good one", () => {
+  const out = [`accounts\t${JSON.stringify(LIST)}`, `claude\twork\t${claudeFile(55, 80)}`, `codex\tacct-a\t${limits(5, 6)}`].join("\n");
+  let st = withRead(undefined, parseRead(out, NOW), NOW);
+  // The first Cursor read times out (exec rejects: the caller passes null) or fails.
+  assert.equal(withCursor(st, null, NOW), st);
+  assert.equal(withCursor(st, { code: -1, stdout: "", stderr: "timeout" }, NOW), st);
+  assert.equal(providerState(st, "claude").reading.windows[0].used, 55);
+  assert.equal(providerState(st, "codex").reading.windows[0].used, 5);
+  assert.equal(providerState(st, "cursor").reading, null);
+
+  // A good read, then a failed one: the good reading stays.
+  st = withCursor(st, ok(JSON.stringify(USAGE)), NOW);
+  st = withCursor(st, { code: 1, stdout: "", stderr: "agent-account: unknown command 'usage'" }, NOW);
+  st = withCursor(st, ok("not json"), NOW);
+  assert.equal(providerState(st, "cursor").reading.windows[0].used, 42.5);
+  assert.equal(providerState(st, "claude").reading.windows[0].used, 55);
+
+  // The next READ replaces the other readings and keeps the Cursor ones.
+  st = withRead(st, parseRead([`accounts\t${JSON.stringify(LIST)}`, `claude\twork\t${claudeFile(60, 80)}`].join("\n"), NOW), NOW + 1000);
+  assert.equal(st.read, NOW + 1000);
+  assert.equal(providerState(st, "claude").reading.windows[0].used, 60);
+  assert.equal(providerState(st, "cursor").reading.windows[0].used, 42.5);
+
+  // A Cursor read that comes before any READ keeps its readings for later.
+  const early = withCursor(undefined, ok(JSON.stringify(USAGE)), NOW);
+  assert.equal(providerState(withRead(early, parseRead(`accounts\t${JSON.stringify(LIST)}`, NOW), NOW), "cursor").reading.windows[0].used, 42.5);
 });
 
 test("the Cursor gauge takes the pace colors of the other windows", () => {
@@ -309,7 +343,7 @@ test("windowName: hours, days, and mo for a monthly billing period", () => {
   assert.equal(windowName(null, true), "mo");
 });
 
-test("the READ script adds Cursor usage, and an old agent-account without usage breaks nothing", () => {
+test("Cursor usage is its own agent-account call; READ never runs it, and an old agent-account breaks nothing", () => {
   const home = mkdtempSync(join(tmpdir(), "quiet-status-"));
   try {
     const bin = join(home, "bin");
@@ -329,20 +363,28 @@ esac
       chmodSync(join(bin, "agent-account"), 0o755);
     };
     const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, XDG_CACHE_HOME: join(home, "cache") };
-    const read = () => execFileSync("sh", ["-c", READ], { env, encoding: "utf8" });
+    const usage = () => spawnSync("agent-account", CURSOR_USAGE, { env, encoding: "utf8" });
 
-    fake(`[ "$3 $4 $5" = "--json --max-age 300" ] || exit 2; cat <<'EOF'\n${JSON.stringify(USAGE, null, "\t")}\nEOF`);
-    const p = parseRead(read(), NOW);
-    assert.equal(providerState(p, "cursor").reading.windows[0].used, 42.5);
+    // READ stays fast: a usage call that hangs is never part of it.
+    fake("sleep 30");
+    const t0 = Date.now();
+    const out = execFileSync("sh", ["-c", READ], { env, encoding: "utf8", timeout: 10000 });
+    assert.ok(Date.now() - t0 < 5000);
+    assert.ok(!out.split("\n").some((l) => l.startsWith("cursor\t")));
+    const st = withRead(undefined, parseRead(out, NOW), NOW);
+    assert.equal(st.accounts.claude.active, "work");
+
+    fake(`[ $# -eq 5 ] && [ "$3 $4 $5" = "--json --max-age 300" ] || exit 2; cat <<'EOF'\n${JSON.stringify(USAGE, null, "\t")}\nEOF`);
+    const r = usage();
+    const good = withCursor(st, { code: r.status, stdout: r.stdout, stderr: r.stderr }, NOW);
+    assert.equal(providerState(good, "cursor").reading.windows[0].used, 42.5);
 
     // An old agent-account: no `usage` command, a usage text on stdout and an error.
     fake(`echo "Usage: agent-account <command>"; echo "agent-account: unknown command 'usage'" >&2; exit 1`);
-    const out = read();
-    assert.ok(!out.includes("Usage:"));
-    const q = parseRead(out, NOW);
-    assert.equal(q.accounts.claude.active, "work");
-    assert.deepEqual(Object.keys(q.cursor), []);
-    assert.equal(providerState(q, "cursor").reading, null);
+    const o = usage();
+    const old = withCursor(st, { code: o.status, stdout: o.stdout, stderr: o.stderr }, NOW);
+    assert.equal(old, st);
+    assert.equal(providerState(old, "cursor").reading, null);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

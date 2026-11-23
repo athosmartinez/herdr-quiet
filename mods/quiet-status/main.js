@@ -8,7 +8,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, HoverCard } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify, openOverlay } from "herdr";
-import { READ, STALE_MS, parseRead, providerState, pace, level, runway, windowName, switchAccount, switchToast } from "./usage.js";
+import { READ, CURSOR_USAGE, STALE_MS, parseRead, withRead, withCursor, providerState, pace, level, runway, windowName, switchAccount, switchToast } from "./usage.js";
 
 const READ_MS = 60000;
 
@@ -61,9 +61,10 @@ function tokens(n) {
 
 export default class QuietStatus extends View {
   init(_props, cx) {
-    this.usage = {}; // machine name ("" for this computer) -> parseRead(...) + { read }
+    this.usage = {}; // machine name ("" for this computer) -> parseRead(...) + { read, cursor }
     this.icons = {}; // machine name -> { [program key]: Program }
     this.reading = new Set();
+    this.readingCursor = new Set(); // machines whose Cursor usage call runs now
     this.again = new Set(); // machines to read once more when their read ends
     this.machine = this.activeMachine();
     this.read(this.machine, cx);
@@ -73,7 +74,7 @@ export default class QuietStatus extends View {
       const m = this.activeMachine();
       if (m === this.machine) return;
       this.machine = m;
-      if (!this.usage[m] || Date.now() - this.usage[m].read > READ_MS) this.read(m, cx);
+      if (!this.usage[m]?.read || Date.now() - this.usage[m].read > READ_MS) this.read(m, cx);
       cx.notify();
     });
   }
@@ -91,6 +92,7 @@ export default class QuietStatus extends View {
     }
     this.reading.add(machine);
     const on = machine || null;
+    this.readCursor(machine, cx);
     cx.spawn(async (cx) => {
       do {
         this.again.delete(machine);
@@ -102,10 +104,23 @@ export default class QuietStatus extends View {
           const r = await exec("sh", ["-c", READ], { on, timeout: 10000 });
           // A read that started before a switch is already old: the next one wins,
           // so the switched account's mark is not undone in between.
-          if (r.code === 0 && !this.again.has(machine)) this.usage[machine] = { ...parseRead(r.stdout, Date.now()), read: Date.now() };
+          if (r.code === 0 && !this.again.has(machine)) this.usage[machine] = withRead(this.usage[machine], parseRead(r.stdout, Date.now()), Date.now());
         } catch {}
       } while (this.again.has(machine));
       this.reading.delete(machine);
+      cx.notify();
+    });
+  }
+
+  // Cursor's usage, apart from READ: it may call the Cursor API, so it gets its
+  // own timeout, and a slow or failed call keeps every reading as it was.
+  readCursor(machine, cx) {
+    if (this.readingCursor.has(machine)) return;
+    this.readingCursor.add(machine);
+    cx.spawn(async (cx) => {
+      const r = await exec("agent-account", CURSOR_USAGE, { on: machine || null, timeout: 30000 }).catch(() => null);
+      this.usage[machine] = withCursor(this.usage[machine], r, Date.now());
+      this.readingCursor.delete(machine);
       cx.notify();
     });
   }

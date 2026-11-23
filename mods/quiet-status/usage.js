@@ -13,16 +13,13 @@ export const STALE_MS = 30 * 60000;
 //   20 newest session files. Sessions are shared by every account, so the
 //   first line of a session file says whose it is; the JS keeps the newest
 //   event per account (a file's time is not its last event's time). Only the
-//   file tails are read, because a long session file grows to many megabytes;
-// - `cursor<TAB><json>`: `agent-account usage cursor --json`, one reading per
-//   Cursor account, cached by agent-account for 5 minutes. An agent-account
-//   older than `usage` prints a usage text or nothing: only a JSON list passes.
+//   file tails are read, because a long session file grows to many megabytes.
+// Only local files: Cursor's usage needs the network, so it has its own call
+// (CURSOR_USAGE), and a slow Cursor API can't make this read time out.
 export const READ = `
 if command -v agent-account >/dev/null 2>&1; then
   a=$(agent-account list --json 2>/dev/null | tr -d '\\n')
   if [ -n "$a" ]; then printf 'accounts\\t%s\\n' "$a"; fi
-  u=$(agent-account usage cursor --json --max-age 300 2>/dev/null | tr -d '\\n')
-  case "$u" in "["*) printf 'cursor\\t%s\\n' "$u" ;; esac
 fi
 for c in "\${XDG_CACHE_HOME:-$HOME/.cache}"/claude-usage/*.json; do
   [ -r "$c" ] || continue
@@ -91,13 +88,12 @@ export function parseCursor(item, now) {
   };
 }
 
-// { accounts, claude: { [account]: reading }, codex: [{ id, reading }],
-// cursor: { [account]: reading } }, the Codex readings newest first. A line
-// that doesn't parse is skipped.
+// { accounts, claude: { [account]: reading }, codex: [{ id, reading }] },
+// the Codex readings newest first. A line that doesn't parse is skipped.
 export function parseRead(stdout, now) {
   // Maps keyed by account id have no prototype: an id like "constructor" is
   // valid in agent-account and must not find Object's members.
-  const out = { accounts: null, claude: Object.create(null), codex: [], cursor: Object.create(null) };
+  const out = { accounts: null, claude: Object.create(null), codex: [] };
   // Only the first tabs split fields: the JSON after them may hold tabs too.
   for (const line of (stdout ?? "").split("\n")) {
     const a = line.indexOf("\t");
@@ -106,14 +102,6 @@ export function parseRead(stdout, now) {
     const b = line.indexOf("\t", a + 1);
     try {
       if (kind === "accounts") out.accounts = JSON.parse(line.slice(a + 1));
-      if (kind === "cursor") {
-        const list = JSON.parse(line.slice(a + 1));
-        for (const item of Array.isArray(list) ? list : []) {
-          const reading = parseCursor(item, now);
-          if (reading && typeof item.id === "string" && item.id) out.cursor[item.id] = reading;
-        }
-        continue;
-      }
       if (b < 0) continue;
       const key = line.slice(a + 1, b);
       if (kind === "claude") {
@@ -131,6 +119,40 @@ export function parseRead(stdout, now) {
 
 // The value of an own key of `map` only, never an inherited member.
 const own = (map, key) => (map && Object.hasOwn(map, key) ? map[key] : null);
+
+// The arguments of `agent-account`, run with its own exec and timeout: one
+// reading per Cursor account, cached by agent-account for 5 minutes, so it
+// reaches the Cursor API at most that often per account.
+export const CURSOR_USAGE = ["usage", "cursor", "--json", "--max-age", "300"];
+
+// `agent-account usage cursor --json` as { [account id]: reading }, or null
+// when the output is not a JSON list (an agent-account older than `usage`
+// prints a usage text or nothing).
+export function parseCursorUsage(stdout, now) {
+  let list;
+  try { list = JSON.parse(stdout); } catch { return null; }
+  if (!Array.isArray(list)) return null;
+  const out = Object.create(null);
+  for (const item of list) {
+    const reading = parseCursor(item, now);
+    if (reading && typeof item.id === "string" && item.id) out[item.id] = reading;
+  }
+  return out;
+}
+
+// The machine's state after a READ: its readings, and the Cursor readings of
+// the state before, which only the Cursor call changes.
+export function withRead(prev, parsed, at) {
+  return { ...parsed, cursor: prev?.cursor ?? Object.create(null), read: at };
+}
+
+// The machine's state after a Cursor call (`r`: { code, stdout }, or null when
+// exec failed or timed out). Only a JSON list replaces the Cursor readings;
+// any failure keeps the state as it was, the other readings included.
+export function withCursor(prev, r, now) {
+  const cursor = r && r.code === 0 ? parseCursorUsage(r.stdout, now) : null;
+  return cursor ? { ...(prev ?? {}), cursor } : prev;
+}
 
 function claudeReading(parsed, name) {
   return own(parsed?.claude, name);
