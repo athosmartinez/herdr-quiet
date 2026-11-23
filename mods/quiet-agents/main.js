@@ -227,7 +227,7 @@ export default class Agents extends View {
     return h_flex()
       .id(`sub-${k.address}`)
       .pl(39)
-      .pr(8)
+      .pr(10)
       .rounded(8)
       .h(26)
       .flex_none()
@@ -381,7 +381,7 @@ export default class Agents extends View {
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex()
         .id(`ag-${a.address}`)
-        .px(8)
+        .px(10)
         .h(30)
         .flex_none()
         .rounded(8)
