@@ -112,7 +112,12 @@ function place(s, ps) {
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
 // Two lines when there is git to show, one otherwise.
-const rowHeight = ({ g }) => (g ? 46 : 30);
+// The git lines under the name, one kind each, so a long branch never hides the
+// pull request: line 2 the branch (with its task and gate), line 3 the pull
+// request and the diff, only when there is one of them.
+const hasDiff = (g) => Boolean(g?.diff && (g.diff.add || g.diff.del));
+const hasLine3 = (g) => Boolean(g?.pr) || hasDiff(g);
+const rowHeight = ({ g }) => (!g ? 30 : hasLine3(g) ? 62 : 46);
 // Icons drawn before each value on line 2, from this mod's own folder.
 const ICON = (name) => `mods/quiet-spaces/icons/${name}.svg`;
 // A pull request is looked up again at most this often for the same branch.
@@ -845,13 +850,14 @@ export default class Spaces extends View {
     const icon = (name, color) => svg(ICON(name)).size(13).flex_none().text_color(color);
     const pr = g.pr;
     const look = pr && prLook(t, pr);
-    const diff = g.diff && (g.diff.add || g.diff.del) ? g.diff : null;
+    const diff = hasDiff(g) ? g.diff : null;
     const part = () => h_flex().flex_none().gap(4).items_center();
     const reviewers = this.reviewersOf(g);
     const branch = h_flex().min_w(0).gap(4).items_center()
       .child(icon("git-branch", t.dim))
-      .child(div().min_w(0).max_w(170).truncate().text_color(t.muted).child(g.branch ?? "detached"));
-    return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0).overflow_hidden()
+      .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
+    const line = () => h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0).overflow_hidden();
+    const line2 = line()
       .child(hover(`branch-card-${w.id}`, branch, branchCard(t, `branch-card-${w.id}`, g, ICON("git-branch"))).flex_initial().min_w(0))
       // Opt-in tracker chip: the task key from the branch name; its card says more.
       .when(Boolean(g.tracker), (el) => el.child(hover(`tracker-card-${w.id}`, part()
@@ -865,19 +871,22 @@ export default class Spaces extends View {
           : gt.stamped ? ["shield", t.blocked, "Gate failed for this commit"]
           : ["shield", t.dim, "No gate run for this commit"];
         return el.child(div().id(`gate-${w.id}`).flex_none().tooltip(tip).child(icon(iconName, color)));
-      })
+      });
+    if (!hasLine3(g)) return line2;
+    const line3 = line()
       .when(Boolean(pr), (el) => el.child(hover(`pr-card-${w.id}`, part()
         .child(icon(look.icon, look.color))
         .child(div().text_color(t.muted).child(`#${pr.number}`))
         .child(div().text_color(look.color).child(look.word))
         // The base only matters while the PR is open; capped so a long one can't push the row.
-        .when(pr.state === "OPEN", (p) => p.child(div().max_w(90).truncate().child(`\u2192 ${pr.base}`)))
+        .when(pr.state === "OPEN", (p) => p.child(div().max_w(110).truncate().child(`\u2192 ${pr.base}`)))
         // Reviewer verdicts from labels: "opus ✓  sol ✗4".
         .children(reviewers.map((r) => verdictChip(t, r))), prCard(t, `pr-card-${w.id}`, pr, look, ICON(look.icon), reviewers)).flex_none()))
       .when(Boolean(diff), (el) => el.child(hover(`diff-card-${w.id}`, part()
         .child(icon("file-diff", t.dim))
         .child(div().text_color(t.done).child(`+${diff.add}`))
         .child(div().text_color(t.ansi1).child(`\u2212${diff.del}`)), diffCard(t, `diff-card-${w.id}`, g, ICON("file-diff"), w.id, w.active)).flex_none()));
+    return v_flex().gap(3).min_w(0).child(line2).child(line3);
   }
 
   row({ w, i, g, tree }, t) {
