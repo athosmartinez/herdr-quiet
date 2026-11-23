@@ -27,6 +27,29 @@ export function subAgents(all, top) {
   return kids;
 }
 
+// A plain object from config, or {}.
+const objectOf = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+
+// The model and effort a coding agent was started with, from its argv only
+// (never the rest of argv: it holds task prompts and paths). Claude Code:
+// `--model X --effort Y`; Codex: `-m X`, `-c model_reasoning_effort=Y`.
+// "claude-opus-5-5" -> "opus", "gpt-6.1-sol" -> "sol". Null when not found.
+export function modelOf(argv) {
+  if (!Array.isArray(argv)) return null;
+  let model = null, effort = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = String(argv[i]), next = argv[i + 1] == null ? null : String(argv[i + 1]);
+    if ((a === "--model" || a === "-m") && next) model = next;
+    else if (a.startsWith("--model=")) model = a.slice(8);
+    else if (a === "--effort" && next) effort = next;
+    else if (a.startsWith("--effort=")) effort = a.slice(9);
+    else if ((a === "-c" || a === "--config") && next && /^model_reasoning_effort=/.test(next)) effort = next.split("=")[1];
+  }
+  if (!model) return null;
+  const short = model.replace(/^claude-/, "").replace(/-\d+(-\d+)*$/, "").replace(/^gpt-[\d.]+-/, "");
+  return { model: short, effort: effort ? effort.replace(/["']/g, "") : null };
+}
+
 // What an agent says it is doing: its own report, else its cleaned title when
 // that says more than its name.
 function said(k, name) {
@@ -168,6 +191,9 @@ export default class Spaces extends View {
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
+    this.config = {};
+    this.loadConfig(cx);
+    cx.timer.every(60000, (cx) => this.loadConfig(cx));
     // Refresh only when the refs could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
   }
@@ -345,7 +371,11 @@ export default class Spaces extends View {
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
       const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
-      const pr = branch.code === 0 ? await this.lookPr(key, info.branch, on, cwd) : null;
+      // The repo's GitHub owner picks the gh account and the tracker; asked
+      // only when quiet.json maps owners.
+      const needsOwner = Object.keys(objectOf(this.config?.gh_accounts)).length || Object.keys(objectOf(this.config?.trackers)).length;
+      info.owner = needsOwner ? await this.ownerOf(on, cwd) : null;
+      const pr = branch.code === 0 ? await this.lookPr(key, info.branch, on, cwd, info.owner) : null;
       info.pr = pr;
       // For the branch card: the last commit, the upstream's name and how many
       // files are not committed. Failures leave the field out of the card.
@@ -378,14 +408,14 @@ export default class Spaces extends View {
   // The branch's pull request, from `gh` on the space's machine. Any failure (no
   // gh, no login, another account, no PR) means no PR, never an error: the row
   // then shows only the branch. Cached per place and branch for PR_EVERY.
-  async lookPr(key, branch, on, cwd) {
+  async lookPr(key, branch, on, cwd, owner) {
     const k = JSON.stringify([key, branch]);
     if (k in this.pr && Date.now() - (this.prAt[k] ?? 0) < PR_EVERY) return this.pr[k];
     this.prAt[k] = Date.now();
     let pr = null;
     try {
       const fields = "number,state,isDraft,reviewDecision,baseRefName,headRefName,title,author,url,updatedAt,mergeable,statusCheckRollup,latestReviews,reviewRequests";
-      const account = await this.ghAccount(on, cwd);
+      const account = this.ghAccount(owner);
       // gh answers with its active account. A repo whose owner maps to another
       // logged-in account gets that account's token for this one call only:
       // the token stays in the child's environment and is never printed.
@@ -408,28 +438,36 @@ export default class Spaces extends View {
     return pr;
   }
 
-  // The gh account for this repo's GitHub owner, from `quiet.json` in the Herdr
-  // home: { "gh_accounts": { "<owner>": "<gh login>" } }. Null (the active
-  // account) when the file, the map or the owner is missing. Read at most once
-  // a minute; the owner comes from the `origin` remote.
-  async ghAccount(on, cwd) {
-    if (!this.ghMap || Date.now() - this.ghMap.at > 60000) {
-      let accounts = {};
+  // `quiet.json` in the Herdr home, the person's own options (see the README):
+  // gh_accounts, trackers, gate, stall_minutes. Read at start and every minute;
+  // a missing or broken file means no options.
+  loadConfig(cx) {
+    cx.spawn(async (cx) => {
+      let j = {};
       try {
         const text = await readTextFile(`${appHome()}/quiet.json`);
-        const j = text ? JSON.parse(text) : {};
-        if (j && typeof j.gh_accounts === "object" && !Array.isArray(j.gh_accounts)) accounts = j.gh_accounts;
+        const parsed = text ? JSON.parse(text) : {};
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) j = parsed;
       } catch {}
-      this.ghMap = { at: Date.now(), accounts };
-    }
-    const accounts = this.ghMap.accounts;
-    if (!Object.keys(accounts).length) return null;
+      this.config = j;
+      cx.notify();
+    });
+  }
+
+  // The GitHub owner in the `origin` remote, or null.
+  async ownerOf(on, cwd) {
     try {
       const r = await exec("git", ["remote", "get-url", "origin"], { cwd, on, timeout: 5000 });
-      const owner = r.code === 0 ? r.stdout.trim().match(/github\.com[:/]([^/]+)\//i)?.[1] : null;
-      const account = owner ? accounts[owner] ?? accounts[owner.toLowerCase()] : null;
-      return typeof account === "string" && /^[A-Za-z0-9-]+$/.test(account) ? account : null;
+      return r.code === 0 ? r.stdout.trim().match(/github\.com[:/]([^/]+)\//i)?.[1] ?? null : null;
     } catch { return null; }
+  }
+
+  // The gh account for this repo's GitHub owner, from `gh_accounts`:
+  // { "<owner>": "<gh login>" }. Null (the active account) when not mapped.
+  ghAccount(owner) {
+    const accounts = objectOf(this.config?.gh_accounts);
+    const account = owner ? accounts[owner] ?? accounts[owner.toLowerCase()] : null;
+    return typeof account === "string" && /^[A-Za-z0-9-]+$/.test(account) ? account : null;
   }
 
   // Lines added and removed. With a PR: the branch against its base, as the PR
@@ -628,9 +666,15 @@ export default class Spaces extends View {
   // [branch] name  [PR] #124 approved \u2192 dev  [diff] +82 \u221214.
   // The branch gives way first; the PR and the diff stay whole.
   // A terminal as a card line, named as the agents list names a sub-agent.
+  // `since`: when its tab started working (Herdr's `working_since`), only while
+  // it works; null when Herdr doesn't know, so the card shows no time at all.
   agentRow(k, status) {
     const name = k.name || k.template || k.program?.name || k.address;
-    return { address: k.address, name, status, since: k.status_ms ?? null, report: said(k, name), program: k.program };
+    const since = status === "working" ? this.workingSince?.get(k.address) ?? null : null;
+    // Working longer than `stall_minutes` (default 20): the card shows the time in amber.
+    const stallMs = (Number(this.config?.stall_minutes) > 0 ? Number(this.config.stall_minutes) : 20) * 60000;
+    const long = Boolean(since) && Date.now() - since > stallMs;
+    return { address: k.address, name, status, since, long, report: said(k, name), program: k.program, model: modelOf(k.argv) };
   }
 
   // The space's agents, most urgent first, as card lines.
@@ -785,6 +829,9 @@ export default class Spaces extends View {
     this.paneList = panes();
     this.terms = new Map(all.map((k) => [k.address, k]));
     this.listed = new Map(this.agentList.map((a) => [a.address, a.status]));
+    // Agent address -> when its tab started working.
+    const tabSince = new Map(spaces().flatMap((s) => (s.tabs ?? []).map((c) => [c.id, c.working_since])));
+    this.workingSince = new Map(this.agentList.map((a) => [a.address, tabSince.get(a.tab) ?? null]));
     this.subs = subAgents(all, this.agentList);
     const list = this.grouped(t, collapsed);
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.

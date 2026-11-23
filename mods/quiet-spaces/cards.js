@@ -202,7 +202,12 @@ function agentLine(t, id, a, statusGlyph, onClick) {
     .child(h_flex().gap(6).items_center().min_w(0)
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_1().min_w(0).truncate().child(a.name))
-      .child(div().flex_none().text_size(11).text_color(t[a.status] ?? t.dim).child(`${STATUS_WORD[a.status] ?? a.status ?? ""}${a.since ? ` · ${duration(Date.now() - a.since)}` : ""}`))
+      // The model and effort it was started with: "opus·high"; "sol" alone when no effort was passed.
+      .when(Boolean(a.model), (el) => el.child(div().flex_none().px(4).rounded(4).bg(t.raised).font_family("JetBrains Mono").text_size(10.5)
+        .text_color(t.muted).child(a.model.effort ? `${a.model.model}·${a.model.effort}` : a.model.model)))
+      .child(div().flex_none().text_size(11).text_color(t[a.status] ?? t.dim).child(STATUS_WORD[a.status] ?? a.status ?? ""))
+      // How long it has been working; amber past stall_minutes.
+      .when(Boolean(a.since), (el) => el.child(div().flex_none().text_size(11).text_color(a.long ? t.blocked : t.dim).child(duration(Date.now() - a.since))))
       .child(statusGlyph(t, a.status)))
     .when(Boolean(a.report), (el) => el.child(div().pl(pic ? 19 : 0).text_size(11).text_color(t.dim).truncate().child(a.report)));
 }
