@@ -62,15 +62,36 @@ The status bar shows how much of each agent's usage limit is spent, for the mach
 
   ```sh
   # $input is the JSON that Claude Code sends to the statusline on stdin.
+  # One file per account: "default", or the folder name of CLAUDE_CONFIG_DIR.
   d="${XDG_CACHE_HOME:-$HOME/.cache}/claude-usage"
+  a=default
+  case "${CLAUDE_CONFIG_DIR:-}" in
+    "" | "$HOME/.claude" | "$HOME/.claude/") ;;
+    *) a=$(basename "$CLAUDE_CONFIG_DIR" | tr -c 'A-Za-z0-9._\n-' '_') ;;
+  esac
   if echo "$input" | jq -e '.rate_limits' >/dev/null 2>&1 && mkdir -p "$d"; then
-    echo "$input" | jq -c '{captured_at: now|floor, rate_limits}' > "$d/rate-limits.json.$$" && mv "$d/rate-limits.json.$$" "$d/rate-limits.json"
+    echo "$input" | jq -c '{captured_at: now|floor, rate_limits}' > "$d/$a.json.$$" && mv "$d/$a.json.$$" "$d/$a.json"
   fi
   ```
 
-  A Claude reading older than 30 minutes shows dim, because only a running session updates it.
+  A Claude reading older than 30 minutes shows dim, because only a running session updates it. The first version of this snippet wrote `rate-limits.json`; rename it or run the new snippet once.
+
+  Known limits: a Codex session resumed under another account still counts for the account that started it, because a session file names only its creator. Two local Codex logins in the same ChatGPT workspace share one account id, so they show the same reading.
 
 Without either file, the status bar looks like Herdr's own.
+
+### Several agent accounts
+
+With [`agent-account`](https://github.com/athosmartinez/terminal-tools) from terminal-tools installed on the bar's machine, Quiet shows every Claude Code, Codex and Cursor account and lets you pick the one that new sessions use, for example when one account runs low on its limit.
+
+- Each account has an id (`default`, or the name given to `agent-account add`), an optional label and an optional tag (`agent-account set <agent> <id> --label <text> --tag <text>`). Quiet shows the label, or the id when there is no label.
+- The bar shows the active account's label before its gauges when an agent has more than one account: `alex  5h 12%  7d 78%`.
+- Rest on the gauge: the card lists each account with its label, its tag as a small chip, its email, its last `5h` and `7d` readings and their age (`no reading yet` when it has none). A check marks the active one.
+- Click another account to run `agent-account use <agent> <id>` on that machine. A notification confirms it: new sessions use that account, and running sessions keep theirs.
+- An account that is not logged in shows `not logged in` and the command to run in your terminal: `agent-account login <agent> <id>`, or for Cursor `agent-account add cursor <id>`, which prints how to save its API key. It can't be picked.
+- Cursor saves no usage limits, so it has no gauges. With more than one Cursor account, the bar shows the Cursor icon and the active label, and the card lists the accounts to switch.
+
+An idle account shows its last saved reading: Claude saves one per account through the statusline snippet above, and Codex sessions say which ChatGPT account wrote them. Without `agent-account`, the bar shows one reading per agent, as above.
 
 ### Orchestrating agents
 
@@ -85,6 +106,8 @@ Without either file, the status bar looks like Herdr's own.
 ## Developing
 
 If `mods/quiet-spaces` is a symlink into a clone, Herdr may not notice edits made in the clone. Switch layouts (`herdr-app do layout.switch --name main`, then `--name quiet`) to load the new code, and check it with `herdr-app check`.
+
+The status bar's readers are plain functions in `mods/quiet-status/usage.js`. Test them with `node test/quiet-status.test.mjs` (it runs the reader against a fake home).
 
 ## Credits
 
