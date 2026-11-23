@@ -240,7 +240,7 @@ export default class Agents extends View {
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       // Tree lines, drawn as the shipped mod draws them (the shape that renders
       // reliably here), in `dim` at 1px so they read on `chrome`.
-      .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
+      .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(l === "│" ? 26 : 17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1).border_color(t.dim))
         .when(l === "└" || l === "├", el => el.border_b(1).rounded_bl(6))))
       .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
