@@ -25,6 +25,7 @@ export default class QuietAccounts extends View {
     this.machine = props()?.machine ?? spaces().find((s) => s.active)?.machine ?? "";
     this.groups = null; // parseAccounts(...)
     this.listError = null;
+    this.listSeq = 0; // the newest readAccounts
     this.gh = null; // [{ host, login, active, ok }]
     this.ghError = null;
     this.config = { text: null, ok: true, map: {} }; // quiet.json and its gh_accounts
@@ -48,14 +49,19 @@ export default class QuietAccounts extends View {
     this.readConfig(cx);
   }
 
+  // Reads can overlap (the timer, and the read after a change) and end in any
+  // order: only the newest one is shown, so an older list never comes back.
   readAccounts(cx) {
+    const seq = ++this.listSeq;
     cx.spawn(async (cx) => {
       try {
         const r = await exec("agent-account", ["list", "--json"], { on: this.on, timeout: 15000 });
+        if (seq !== this.listSeq) return;
         const groups = r.code === 0 ? parseAccounts(r.stdout) : null;
         if (groups) { this.groups = groups; this.listError = null; }
         else this.listError = r.code === 127 ? this.missing("agent-account") : firstLine(r.stderr) || "agent-account list gave no list";
       } catch {
+        if (seq !== this.listSeq) return;
         this.listError = this.missing("agent-account");
       }
       cx.notify();
