@@ -278,7 +278,7 @@ test("parseRead keeps one Cursor reading per account; an error account has none"
   assert.equal(k.reading.windows[0].used, 42.5);
   assert.deepEqual(k.accounts.map((a) => [a.id, a.reading?.windows[0].used ?? null]), [["default", 42.5], ["ci", null]]);
   // Not a list (an old agent-account that printed something else): ignored.
-  assert.deepEqual(parseRead(`cursor\t{"error":"x"}\ncursor\tnot json`, NOW).cursor, {});
+  assert.deepEqual(Object.keys(parseRead(`cursor\t{"error":"x"}\ncursor\tnot json`, NOW).cursor), []);
 });
 
 test("Cursor with one account shows when it has a reading", () => {
@@ -341,9 +341,25 @@ esac
     assert.ok(!out.includes("Usage:"));
     const q = parseRead(out, NOW);
     assert.equal(q.accounts.claude.active, "work");
-    assert.deepEqual(q.cursor, {});
+    assert.deepEqual(Object.keys(q.cursor), []);
     assert.equal(providerState(q, "cursor").reading, null);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("an account id that names an Object member (constructor) has no reading of its own by accident", () => {
+  const list = {
+    claude: { active: "constructor", accounts: [{ id: "default", name: "default", logged_in: true }, { id: "constructor", name: "constructor", logged_in: true }] },
+    cursor: { active: "default", accounts: [{ id: "default", name: "default", logged_in: null }, { id: "constructor", name: "constructor", logged_in: null }, { id: "toString", name: "toString", logged_in: null }] },
+  };
+  const p = parseRead(`accounts\t${JSON.stringify(list)}`, NOW);
+  const c = providerState(p, "claude");
+  assert.equal(c.reading, null);
+  assert.deepEqual(c.accounts.map((a) => a.reading), [null, null]);
+  const k = providerState(p, "cursor");
+  assert.deepEqual(k.accounts.map((a) => a.reading), [null, null, null]);
+  // Its real reading still comes through.
+  const q = parseRead(`accounts\t${JSON.stringify(list)}\nclaude\tconstructor\t${claudeFile(33, 44)}`, NOW);
+  assert.equal(providerState(q, "claude").reading.windows[0].used, 33);
 });

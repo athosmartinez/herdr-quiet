@@ -95,7 +95,9 @@ export function parseCursor(item, now) {
 // cursor: { [account]: reading } }, the Codex readings newest first. A line
 // that doesn't parse is skipped.
 export function parseRead(stdout, now) {
-  const out = { accounts: null, claude: {}, codex: [], cursor: {} };
+  // Maps keyed by account id have no prototype: an id like "constructor" is
+  // valid in agent-account and must not find Object's members.
+  const out = { accounts: null, claude: Object.create(null), codex: [], cursor: Object.create(null) };
   // Only the first tabs split fields: the JSON after them may hold tabs too.
   for (const line of (stdout ?? "").split("\n")) {
     const a = line.indexOf("\t");
@@ -127,8 +129,11 @@ export function parseRead(stdout, now) {
   return out;
 }
 
+// The value of an own key of `map` only, never an inherited member.
+const own = (map, key) => (map && Object.hasOwn(map, key) ? map[key] : null);
+
 function claudeReading(parsed, name) {
-  return parsed?.claude?.[name] ?? null;
+  return own(parsed?.claude, name);
 }
 
 function newest(readings) {
@@ -161,7 +166,7 @@ export function providerState(parsed, key) {
   const activeId = ids.includes(list.active) ? list.active : "default";
   const readingOf = (id, a) => key === "claude" ? claudeReading(parsed, id)
     : key === "codex" ? (a.account_id ? newest((parsed.codex ?? []).filter((c) => c.id === a.account_id).map((c) => c.reading)) : null)
-    : key === "cursor" ? parsed?.cursor?.[id] ?? null
+    : key === "cursor" ? own(parsed?.cursor, id)
     : null;
   const accounts = list.accounts.map((a) => {
     const id = idOf(a);
