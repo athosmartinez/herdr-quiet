@@ -29,9 +29,9 @@ export function subAgents(all, top) {
 
 // The last `max` meaningful lines of a screen: no blank lines, no lines made
 // only of box-drawing borders, each cut at 160 characters.
-export function screenTail(text, max = 10) {
+export function screenTail(text, max = 12) {
   const lines = String(text ?? "").split("\n").map((l) => l.replace(/\s+$/, ""))
-    .filter((l) => l.trim() && !/^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╯╰═║╔╗╚╝╟╢·.\-_=|+]+$/.test(l));
+    .filter((l) => l.trim() && !/^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╯╰═║╔╗╚╝╟╢╌╍┄┅┈┉·.\-_=|+]+$/.test(l));
   return lines.slice(-max).map((l) => (l.length > 160 ? `${l.slice(0, 159)}…` : l));
 }
 
@@ -406,6 +406,15 @@ export default class Spaces extends View {
       info.commit = info.history.find((h) => h.hash) ?? null;
       info.upstream = up?.code === 0 ? up.stdout.trim() : null;
       info.dirty = dirty?.code === 0 ? dirty.stdout.split("\n").filter(Boolean).length : null;
+      // Opt-in (`"gate": true`): the PR gate's stamp for HEAD, written by a gate
+      // script at <git common dir>/agent-pr-gate/<HEAD sha>.json with `pass`.
+      // A file read, no exec. null: gate off or no commit.
+      info.gate = null;
+      if (this.config?.gate === true && info.commit?.sha) {
+        let stamp = null;
+        try { stamp = JSON.parse(await readTextFile(`${repo}/agent-pr-gate/${info.commit.sha}.json`, { on }) ?? "null"); } catch {}
+        info.gate = { stamped: Boolean(stamp), pass: stamp?.pass === true, pushed: Boolean(info.upstream) && ahead === 0 };
+      }
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -784,6 +793,15 @@ export default class Spaces extends View {
       .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
     return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0)
       .child(hover(`branch-card-${w.id}`, branch, branchCard(t, `branch-card-${w.id}`, g, ICON("git-branch"))).flex_initial().min_w(0))
+      // Opt-in gate shield: green only when the stamp passed for HEAD and HEAD is pushed.
+      .when(Boolean(g.gate) && (g.gate.stamped || pr?.state === "OPEN"), (el) => {
+        const gt = g.gate;
+        const [iconName, color, tip] = gt.pass && gt.pushed ? ["shield-check", t.done, "Gate passed for this commit"]
+          : gt.pass ? ["shield-check", t.muted, "Gate passed for this commit; push it so origin matches"]
+          : gt.stamped ? ["shield", t.blocked, "Gate failed for this commit"]
+          : ["shield", t.dim, "No gate run for this commit"];
+        return el.child(div().id(`gate-${w.id}`).flex_none().tooltip(tip).child(icon(iconName, color)));
+      })
       .when(Boolean(pr), (el) => el.child(hover(`pr-card-${w.id}`, part()
         .child(icon(look.icon, look.color))
         .child(div().text_color(t.muted).child(`#${pr.number}`))
