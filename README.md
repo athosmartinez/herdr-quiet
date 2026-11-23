@@ -62,15 +62,32 @@ The status bar shows how much of each agent's usage limit is spent, for the mach
 
   ```sh
   # $input is the JSON that Claude Code sends to the statusline on stdin.
+  # One file per account: "default", or the folder name of CLAUDE_CONFIG_DIR.
   d="${XDG_CACHE_HOME:-$HOME/.cache}/claude-usage"
+  a=default
+  case "${CLAUDE_CONFIG_DIR:-}" in
+    "" | "$HOME/.claude" | "$HOME/.claude/") ;;
+    *) a=$(basename "$CLAUDE_CONFIG_DIR" | tr -c 'A-Za-z0-9._\n-' '_') ;;
+  esac
   if echo "$input" | jq -e '.rate_limits' >/dev/null 2>&1 && mkdir -p "$d"; then
-    echo "$input" | jq -c '{captured_at: now|floor, rate_limits}' > "$d/rate-limits.json.$$" && mv "$d/rate-limits.json.$$" "$d/rate-limits.json"
+    echo "$input" | jq -c '{captured_at: now|floor, rate_limits}' > "$d/$a.json.$$" && mv "$d/$a.json.$$" "$d/$a.json"
   fi
   ```
 
-  A Claude reading older than 30 minutes shows dim, because only a running session updates it.
+  A Claude reading older than 30 minutes shows dim, because only a running session updates it. The first version of this snippet wrote `rate-limits.json`; Quiet still reads it as the `default` account.
 
 Without either file, the status bar looks like Herdr's own.
+
+### Several agent accounts
+
+With [`agent-account`](https://github.com/athosmartinez/terminal-tools) from terminal-tools installed on the bar's machine, Quiet shows every logged-in Claude Code and Codex account and lets you pick the one that new sessions use, for example when one account runs low on its limit.
+
+- The bar shows the active account's name before its gauges when an agent has more than one account: `work  5h 12%  7d 78%`.
+- Rest on the gauge: the card lists each account with its email, its last `5h` and `7d` readings and their age (`no reading yet` when it has none). A check marks the active one.
+- Click another account to run `agent-account use <agent> <name>` on that machine. A notification confirms it: new sessions use that account, and running sessions keep theirs.
+- An account that is not logged in shows `not logged in` and the `agent-account login` command to run in your terminal. It can't be picked.
+
+An idle account shows its last saved reading: Claude saves one per account through the statusline snippet above, and Codex sessions say which ChatGPT account wrote them. Without `agent-account`, the bar shows one reading per agent, as above.
 
 ### Orchestrating agents
 
@@ -85,6 +102,8 @@ Without either file, the status bar looks like Herdr's own.
 ## Developing
 
 If `mods/quiet-spaces` is a symlink into a clone, Herdr may not notice edits made in the clone. Switch layouts (`herdr-app do layout.switch --name main`, then `--name quiet`) to load the new code, and check it with `herdr-app check`.
+
+The status bar's readers are plain functions in `mods/quiet-status/usage.js`. Test them with `node test/quiet-status.test.mjs` (it runs the reader against a fake home).
 
 ## Credits
 
