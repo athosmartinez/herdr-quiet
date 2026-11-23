@@ -60,6 +60,7 @@ All are optional and off unless set. The file is read at start and every minute.
 The status bar shows how much of each agent's usage limit is spent, for the machine it names: `5h 12%  7d 78%` after the Claude icon, `7d 5%` after the Codex icon. A value turns amber when it is spent faster than its window passes (15 points ahead of the clock, or 75% used), and semibold at 35 points ahead or 90%. Rest on it for the reset time, the pace and how long the limit lasts at this speed.
 
 - **Codex** needs nothing: Quiet reads the last rate-limit event in the newest files of `~/.codex/sessions`.
+- **Cursor** needs an `agent-account` with the `usage` command (terminal-tools). Once a minute Quiet runs `agent-account usage cursor --json --max-age 300`, which reads the Cursor API at most every 5 minutes per account. The gauge is the billing period, `mo 42%`, with the same pace colors. The card gives the plan, the USD spent of the limit, the reset time and the reading's age. An account that agent-account can't read, or a plan with no limit, shows no gauge and no error. An older `agent-account` without `usage` changes nothing.
 - **Claude Code** gives its limits only to its statusline command. Add these lines to that script to save them where Quiet reads them (it needs `jq`):
 
   ```sh
@@ -80,7 +81,7 @@ The status bar shows how much of each agent's usage limit is spent, for the mach
 
   Known limits: a Codex session resumed under another account still counts for the account that started it, because a session file names only its creator. Two local Codex logins in the same ChatGPT workspace share one account id, so they show the same reading.
 
-Without either file, the status bar looks like Herdr's own.
+Without any of these readings, the status bar looks like Herdr's own.
 
 ### Several agent accounts
 
@@ -88,10 +89,10 @@ With [`agent-account`](https://github.com/athosmartinez/terminal-tools) from ter
 
 - Each account has an id (`default`, or the name given to `agent-account add`), an optional label and an optional tag (`agent-account set <agent> <id> --label <text> --tag <text>`). Quiet shows the label, or the id when there is no label.
 - The bar shows the active account's label before its gauges when an agent has more than one account: `alex  5h 12%  7d 78%`.
-- Rest on the gauge: the card lists each account with its label, its tag as a small chip, its email, its last `5h` and `7d` readings and their age (`no reading yet` when it has none). A check marks the active one.
-- Click another account to run `agent-account use <agent> <id>` on that machine. A notification confirms it: new sessions use that account, and running sessions keep theirs.
+- Rest on the gauge: the card lists each account with its label, its tag as a small chip, its email, its last readings (`5h` and `7d`, `mo` for Cursor) and their age (`no reading yet` when it has none). A check marks the active one.
+- Click another account to switch to it on that machine. For Claude and Codex, Quiet runs `agent-account use <agent> <id> --restart`: new sessions use that account, and the open tab sessions of that agent restart on it and continue their conversation. An idle session restarts at once, a busy one after its turn ends; workers started with `hc run` are never restarted. The notification shows agent-account's line, for example `2 claude sessions will restart on work when idle`. An older `agent-account` without `--restart` only switches, and the notification says that running sessions keep their account. For Cursor, Quiet runs plain `agent-account use cursor <id>`.
 - An account that is not logged in shows `not logged in` and the command to run in your terminal: `agent-account login <agent> <id>`, or for Cursor `agent-account add cursor <id>`, which prints how to save its API key. It can't be picked.
-- Cursor saves no usage limits, so it has no gauges. With more than one Cursor account, the bar shows the Cursor icon and the active label, and the card lists the accounts to switch.
+- Cursor shows its usage only through `agent-account usage` (see above). With a reading it shows like the other agents, also with one account. Without one, it shows only with more than one account: the Cursor icon and the active label, and the card lists the accounts to switch.
 
 An idle account shows its last saved reading: Claude saves one per account through the statusline snippet above, and Codex sessions say which ChatGPT account wrote them. Without `agent-account`, the bar shows one reading per agent, as above.
 
@@ -104,7 +105,7 @@ A window to manage the accounts, for the machine that the status bar names. Open
 ```
 
 - **Agent accounts** (needs `agent-account`): each Claude, Codex and Cursor account with its label, tag and email, and a check on the active one.
-  - **Use** runs `agent-account use <agent> <id>`: new sessions use that account, and running sessions keep theirs.
+  - **Use** switches as a click in the status card does: `agent-account use <agent> <id> --restart` for Claude and Codex (the open tab sessions restart on that account when idle), plain `use` for Cursor and for an older `agent-account`. The notification says which one ran.
   - **Edit** changes the label and the tag (`agent-account set`). An empty field clears it.
   - **Add account** creates one (`agent-account add <agent> <id>`, then `agent-account set` for the label and tag, only when the add made a new account). The id takes lowercase letters, digits, `.`, `_` and `-`.
   - An account that is not logged in shows `agent-account login <agent> <id>` and a **Log in** button. The button opens a new tab that runs that command, because the login asks you for a browser, a code or an API key. Nothing logs in out of your sight.
