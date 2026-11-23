@@ -251,7 +251,8 @@ export function diffCard(t, id, g, iconPath, spaceId, active) {
 // fills reach past the text, and the text lines up with the card.
 function scrollList(id, rows, height, max = 280) {
   const list = v_flex().id(`${id}-list`).mx(-6).gap(2);
-  return height > max ? list.h(max).overflow_y_scrollbar().mode("always").children(rows) : list.children(rows);
+  // pr(12) while scrolling: the bar sits in its own gutter, not over the rows' status.
+  return height > max ? list.h(max).pr(12).overflow_y_scrollbar().mode("always").children(rows) : list.children(rows);
 }
 // Row heights for the estimate: an agent line is 28px, 46px with its report line.
 const agentRowsHeight = (list, withLine) => list.reduce((s, a) => s + (withLine(a) ? 46 : 28) + 2, 0);
