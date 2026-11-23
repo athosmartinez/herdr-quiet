@@ -472,7 +472,9 @@ export default class QuietAccounts extends View {
               .child(this.button(t, `map-unmap-${owner}`, "Unmap", (cx) => this.unmap(owner, cx)))))
           .when(here, (el) => el.child(this.mapForm(t, logins))));
       }
-      if (editing && !f.owner) rows.push(this.mapForm(t, logins));
+      // A new pair's form, or an Edit form whose owner left the file (changed
+      // outside the panel): it stays on screen with its draft and its error.
+      if (editing && !(f.owner && Object.hasOwn(this.config.map, f.owner))) rows.push(this.mapForm(t, logins));
       rows.push(div().px(6).pt(2).text_size(11).text_color(t.dim)
         .child("A repo whose origin is under the owner reads its PRs with that gh account. Saved in quiet.json."));
     }
