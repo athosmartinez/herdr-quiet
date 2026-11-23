@@ -223,3 +223,43 @@ export function runway(w, now) {
   if (passed <= 0) return null;
   return ((100 - w.used) * passed) / w.used;
 }
+
+// --- account switch --------------------------------------------------------
+// The same code is in quiet-status/usage.js and quiet-accounts/accounts.js,
+// because a mod imports only its own files; test/account-switch.test.mjs runs
+// both copies.
+
+// A switch of Claude or Codex also restarts the open tab sessions of that
+// agent, so they continue on the new account. Cursor keeps its own login.
+const RESTARTS = ["claude", "codex"];
+const RESTART_LINE = /^\d+ \S+ sessions? will restart on .+$/m;
+
+// An agent-account older than --restart: one that refuses it, or one that
+// ignores it and prints its old line.
+const restartRefused = (r) => /--restart|unknown option|unrecognized option|too many arguments/i.test(`${r.stderr ?? ""}\n${r.stdout ?? ""}`);
+
+// `agent-account use <provider> <id> [--restart]`, run with `cli(args)` (a
+// promise of { code, stdout, stderr }). The result has `restart`: "on" (the
+// output says which sessions restart), "off" (Cursor) or "unsupported" (an
+// older agent-account: running sessions keep their account).
+export async function switchAccount(cli, provider, id) {
+  const plain = ["use", provider, id];
+  if (!RESTARTS.includes(provider)) return { ...(await cli(plain)), restart: "off" };
+  const r = await cli([...plain, "--restart"]);
+  if (r.code !== 0 && restartRefused(r)) return { ...(await cli(plain)), restart: "unsupported" };
+  if (r.code === 0 && !RESTART_LINE.test(r.stdout ?? "")) return { ...r, restart: "unsupported" };
+  return { ...r, restart: "on" };
+}
+
+// The toast after a switch: the restart line of agent-account, or why the
+// running sessions keep their account.
+export function switchToast(name, label, r) {
+  const first = (s) => (s ?? "").trim().split("\n", 1)[0];
+  if (r.code !== 0) {
+    return { title: `${name}: could not switch to ${label}`, body: first(r.stderr) || first(r.stdout) || `agent-account exited with ${r.code}`, level: "error" };
+  }
+  const body = r.restart === "on" ? (r.stdout.match(RESTART_LINE)?.[0] ?? "").trim()
+    : r.restart === "unsupported" ? "Running sessions keep their account: this agent-account has no --restart."
+    : "Running sessions keep their account.";
+  return { title: `${name}: new sessions use ${label}`, body, level: "success", timeout: 5000 };
+}

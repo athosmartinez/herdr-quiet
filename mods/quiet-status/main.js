@@ -8,7 +8,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, HoverCard } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, exec, knownAgents, notify, openOverlay } from "herdr";
-import { READ, STALE_MS, parseRead, providerState, pace, level, runway, windowName } from "./usage.js";
+import { READ, STALE_MS, parseRead, providerState, pace, level, runway, windowName, switchAccount, switchToast } from "./usage.js";
 
 const READ_MS = 60000;
 
@@ -58,8 +58,6 @@ function tokens(n) {
   if (n >= 1e3) return `${Math.round(n / 1e3)}k`;
   return String(n);
 }
-
-const firstLine = (s) => (s ?? "").trim().split("\n", 1)[0];
 
 export default class QuietStatus extends View {
   init(_props, cx) {
@@ -113,23 +111,24 @@ export default class QuietStatus extends View {
   }
 
   // Makes account `a` the one that new sessions of `provider` use on the
-  // bar's machine. Running sessions keep theirs.
+  // bar's machine. For Claude and Codex, the open tab sessions restart on it
+  // when idle (`--restart`); an older agent-account leaves them as they are.
   use(provider, a, cx) {
     const machine = this.machine;
     cx.spawn(async (cx) => {
-      let r;
-      try {
-        r = await exec("agent-account", ["use", provider.key, a.id], { on: machine || null, timeout: 10000 });
-      } catch (e) {
-        r = { code: -1, stdout: "", stderr: String(e?.message ?? e) };
-      }
+      const cli = async (args) => {
+        try {
+          return await exec("agent-account", args, { on: machine || null, timeout: 10000 });
+        } catch (e) {
+          return { code: -1, stdout: "", stderr: String(e?.message ?? e) };
+        }
+      };
+      const r = await switchAccount(cli, provider.key, a.id);
       if (r.code === 0) {
         const list = this.usage[machine]?.accounts?.[provider.key];
         if (list) list.active = a.id;
-        notify({ title: `${provider.name}: new sessions use ${a.label}`, body: "Running sessions keep their account.", level: "success", timeout: 5000 });
-      } else {
-        notify({ title: `${provider.name}: could not switch to ${a.label}`, body: firstLine(r.stderr) || firstLine(r.stdout) || `agent-account exited with ${r.code}`, level: "error" });
       }
+      notify(switchToast(provider.name, a.label, r));
       cx.notify();
       this.read(machine, cx, true);
     });
@@ -251,7 +250,9 @@ export default class QuietStatus extends View {
     if (s.accounts.length) {
       rows.push(section("Accounts"));
       rows.push(v_flex().children(s.accounts.map((a) => this.account(t, provider, a, now))));
-      rows.push(div().text_size(11).text_color(t.dim).child("Click an account to use it in new sessions."));
+      rows.push(div().text_size(11).text_color(t.dim).child(provider.key === "cursor"
+        ? "Click an account to use it in new sessions."
+        : "Click an account to use it. Open tabs restart on it when idle."));
       rows.push(this.manage(t));
     } else if (s.managed) {
       // One account: no list to switch, but the panel can add another.

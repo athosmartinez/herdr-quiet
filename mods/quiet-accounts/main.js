@@ -8,7 +8,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
-  parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
+  parseAccounts, addArgs, setArgs, loginArgv, loginCommand, switchAccount, switchToast,
   parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError, accountIds, configError,
 } from "./accounts.js";
 
@@ -182,10 +182,10 @@ export default class QuietAccounts extends View {
     if (this.busy) return;
     this.busy = true;
     cx.spawn(async (cx) => {
-      const r = await this.cli(useArgs(group.key, a.id));
+      // Claude and Codex: the open tab sessions restart on the new account.
+      const r = await switchAccount((args) => this.cli(args), group.key, a.id);
       this.busy = false;
-      if (r.code === 0) notify({ title: `${group.name}: new sessions use ${a.label}`, body: "Running sessions keep their account.", level: "success", timeout: 5000 });
-      else notify({ title: `${group.name}: could not switch to ${a.label}`, body: firstLine(r.stderr) || firstLine(r.stdout) || `agent-account exited with ${r.code}`, level: "error" });
+      notify(switchToast(group.name, a.label, r));
       this.readAccounts(cx);
       cx.notify();
     });
@@ -423,7 +423,7 @@ export default class QuietAccounts extends View {
       rows.push(div().px(6).text_size(11).text_color(t.dim).child("Reading…"));
     } else {
       rows.push(...this.groups.map((g) => this.provider(t, g)));
-      rows.push(div().px(6).pt(2).text_size(11).text_color(t.dim).child("Use: new sessions start with that account; running sessions keep theirs."));
+      rows.push(div().px(6).pt(2).text_size(11).text_color(t.dim).child("Use: new sessions start with that account; open Claude and Codex tabs restart on it when idle."));
     }
     return v_flex().gap(6).children(rows);
   }
