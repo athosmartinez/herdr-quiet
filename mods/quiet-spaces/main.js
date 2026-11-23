@@ -7,7 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, readTextFile, appHome } from "herdr";
-import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, clean, kidStatus } from "./cards.js";
+import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, verdictChip, clean, kidStatus } from "./cards.js";
 
 // Live sub-agents per space: each live terminal with a parent is walked up to
 // its first ancestor that is an agent in a space (the same `parent` links the
@@ -675,6 +675,26 @@ export default class Spaces extends View {
   // Line 2: an icon before each value, so each one says what it is:
   // [branch] name  [PR] #124 approved \u2192 dev  [diff] +82 \u221214.
   // The branch gives way first; the PR and the diff stay whole.
+  // Reviewers of this PR, from labels the orchestrator sets on their terminals
+  // after it checks a review: quiet.pr=<n>, quiet.verdict=<PASS|ISSUES|...>,
+  // quiet.findings=<count>, optional quiet.repo=<repo name>. No labels: none.
+  reviewersOf(g) {
+    if (!g?.pr) return [];
+    const out = [];
+    for (const k of this.terms?.values() ?? []) {
+      const l = objectOf(k.labels);
+      if (l["quiet.pr"] !== String(g.pr.number)) continue;
+      if (l["quiet.repo"] && l["quiet.repo"] !== g.name) continue;
+      const findings = Number.parseInt(l["quiet.findings"] ?? "", 10);
+      out.push({
+        address: k.address, name: k.name || k.address, model: modelOf(k.argv), live: k.state === "live",
+        verdict: (l["quiet.verdict"] ?? "").trim().toUpperCase() || null,
+        findings: Number.isFinite(findings) ? findings : null,
+      });
+    }
+    return out;
+  }
+
   // Live agents waiting for the person, anywhere: their status is blocked (a
   // sub-agent's "error" counts, as in the agents list). Each gets its space's
   // name and the tail of its screen, where the tool draws its question.
@@ -758,6 +778,7 @@ export default class Spaces extends View {
     const look = pr && prLook(t, pr);
     const diff = g.diff && (g.diff.add || g.diff.del) ? g.diff : null;
     const part = () => h_flex().flex_none().gap(4).items_center();
+    const reviewers = this.reviewersOf(g);
     const branch = h_flex().min_w(0).gap(4).items_center()
       .child(icon("git-branch", t.dim))
       .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
@@ -767,7 +788,9 @@ export default class Spaces extends View {
         .child(icon(look.icon, look.color))
         .child(div().text_color(t.muted).child(`#${pr.number}`))
         .child(div().text_color(look.color).child(look.word))
-        .child(div().child(`\u2192 ${pr.base}`)), prCard(t, `pr-card-${w.id}`, pr, look, ICON(look.icon))).flex_none()))
+        .child(div().child(`\u2192 ${pr.base}`))
+        // Reviewer verdicts from labels: "opus ✓  sol ✗4".
+        .children(reviewers.map((r) => verdictChip(t, r))), prCard(t, `pr-card-${w.id}`, pr, look, ICON(look.icon), reviewers)).flex_none()))
       .when(Boolean(diff), (el) => el.child(hover(`diff-card-${w.id}`, part()
         .child(icon("file-diff", t.dim))
         .child(div().text_color(t.done).child(`+${diff.add}`))

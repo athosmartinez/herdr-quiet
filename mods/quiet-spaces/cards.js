@@ -90,7 +90,25 @@ export function checkCounts(rollup) {
   return c;
 }
 
-export function prCard(t, id, pr, look, iconPath) {
+// A reviewer's verdict as a mark and a color: ✓ pass, ✗n issues, ! blocked,
+// ◌ still reviewing, ? ended without a verdict label.
+export function verdictLook(t, r) {
+  const v = r.verdict ?? "";
+  if (/^(PASS|APPROVE|APPROVED)$/.test(v)) return { mark: "✓", color: t.done, word: "pass" };
+  if (/^(ISSUES|REQUEST CHANGES|CHANGES_REQUESTED|CHANGES)$/.test(v)) return { mark: `✗${r.findings ?? ""}`, color: t.blocked, word: `${r.findings ?? "some"} issue${r.findings === 1 ? "" : "s"}` };
+  if (v === "BLOCKED") return { mark: "!", color: t.blocked, word: "blocked" };
+  if (!v && r.live) return { mark: "◌", color: t.working, word: "reviewing" };
+  return { mark: "?", color: t.dim, word: v ? v.toLowerCase() : "no verdict" };
+}
+
+export function verdictChip(t, r) {
+  const look = verdictLook(t, r);
+  return h_flex().flex_none().gap(3).items_center()
+    .child(div().text_color(t.dim).child(r.model?.model ?? r.name))
+    .child(div().text_color(look.color).child(look.mark));
+}
+
+export function prCard(t, id, pr, look, iconPath, agentReviews = []) {
   const checks = checkCounts(pr.checks);
   const total = checks.pass + checks.fail + checks.pending;
   const reviewers = (pr.reviews ?? []).map((r) => `${r.author?.login ?? "?"} ${r.state === "APPROVED" ? "✓" : r.state === "CHANGES_REQUESTED" ? "±" : "·"}`);
@@ -109,6 +127,19 @@ export function prCard(t, id, pr, look, iconPath) {
     .when(reviewers.length > 0, (el) => el.child(fact(t, "Reviews", reviewers.join(", "))))
     .when(asked.length > 0, (el) => el.child(fact(t, "Asked", asked.join(", "))))
     .when(pr.state === "OPEN", (el) => el.child(fact(t, "Merge", merge[0], merge[1])))
+    // Agent reviewers (labels on their terminals); click one to show it.
+    .when(agentReviews.length > 0, (el) => el.child(v_flex().gap(2)
+      .child(div().text_color(t.dim).child("Agent reviews"))
+      .children(agentReviews.map((r, i) => {
+        const v = verdictLook(t, r);
+        return h_flex().id(`${id}-rev${i}`).gap(6).px(6).py(3).rounded(5).items_center().min_w(0).cursor_pointer().hover((s) => s.bg(t.hover))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => { cx.stop_propagation(); run("agent.focus", { terminal: r.address }); })
+          .child(div().flex_1().min_w(0).truncate().child(r.name))
+          .when(Boolean(r.model), (row) => row.child(div().flex_none().px(4).rounded(4).bg(t.raised).font_family("JetBrains Mono").text_size(10.5)
+            .text_color(t.muted).child(r.model.effort ? `${r.model.model}·${r.model.effort}` : r.model.model)))
+          .child(div().flex_none().text_color(v.color).child(`${v.mark} ${v.word}`));
+      }))))
     .when(Boolean(pr.url), (el) => el.child(actions(
       button(t, `${id}-open`, "Open on GitHub", () => openUrl(pr.url)),
       button(t, `${id}-copy`, "Copy URL", (cx) => cx.write_to_clipboard(pr.url)),
