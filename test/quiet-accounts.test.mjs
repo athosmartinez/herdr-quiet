@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
   parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting,
-  validGhName, firstLine,
+  validGhName, firstLine, execError,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -204,6 +204,14 @@ test("validGhName and firstLine", () => {
   assert.equal(validGhName(""), false);
   assert.equal(firstLine("\n  boom\nmore"), "boom");
   assert.equal(firstLine(null), "");
+});
+
+test("execError says not installed only when the program is missing", () => {
+  assert.equal(execError("gh", "box", new Error("cannot start gh: program not found")), "gh is not installed on box");
+  assert.equal(execError("gh", "box", { code: 127 }), "gh is not installed on box");
+  assert.equal(execError("gh", "box", new Error("machine box is unreachable\nretry later")), "gh could not run on box: machine box is unreachable");
+  assert.equal(execError("agent-account", "this computer", "boom"), "agent-account could not run on this computer: boom");
+  assert.equal(execError("gh", "box", null), "gh could not run on box: no reason given");
 });
 
 // The commands the panel builds, run against agent-account with a fake

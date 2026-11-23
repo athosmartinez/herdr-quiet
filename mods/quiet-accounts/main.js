@@ -9,7 +9,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
   parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine,
+  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError,
 } from "./accounts.js";
 
 // A login runs in its own terminal: read again while the panel is open, so
@@ -59,17 +59,13 @@ export default class QuietAccounts extends View {
         if (seq !== this.listSeq) return;
         const groups = r.code === 0 ? parseAccounts(r.stdout) : null;
         if (groups) { this.groups = groups; this.listError = null; }
-        else this.listError = r.code === 127 ? this.missing("agent-account") : firstLine(r.stderr) || "agent-account list gave no list";
-      } catch {
+        else this.listError = r.code === 127 ? execError("agent-account", this.where, r) : firstLine(r.stderr) || "agent-account list gave no list";
+      } catch (e) {
         if (seq !== this.listSeq) return;
-        this.listError = this.missing("agent-account");
+        this.listError = execError("agent-account", this.where, e);
       }
       cx.notify();
     });
-  }
-
-  missing(program) {
-    return `${program} is not installed on ${this.where}`;
   }
 
   // `--json` and `--no-refresh` keep it read-only and token-free; an older gh
@@ -84,15 +80,15 @@ export default class QuietAccounts extends View {
         const r = await gh(["--json", "hosts", "--no-refresh"]);
         const list = r.code === 0 ? parseGhStatus(r.stdout) : null;
         if (list) res = { list };
-        else if (r.code === 127) res = { error: this.missing("gh") };
+        else if (r.code === 127) res = { error: execError("gh", this.where, r) };
         else {
           let t = await gh(["--no-refresh"]);
           if (flagRejected(`${t.stdout}\n${t.stderr}`)) t = await gh([]);
           res = ghStatusFromText(t.code, t.stdout, t.stderr);
           if (res.error) res.error = `gh auth status failed on ${this.where}: ${res.error}`;
         }
-      } catch {
-        res = { error: this.missing("gh") };
+      } catch (e) {
+        res = { error: execError("gh", this.where, e) };
       }
       this.gh = res.list ?? null;
       this.ghError = res.error ?? null;
@@ -389,7 +385,8 @@ export default class QuietAccounts extends View {
   agents(t) {
     const rows = [this.section(t, "Agent accounts")];
     if (this.listError) {
-      rows.push(div().px(6).text_size(11).text_color(t.dim).child(`${this.listError}. Install agent-account from terminal-tools to manage accounts.`));
+      rows.push(div().px(6).text_size(11).text_color(t.dim).child(/ is not installed on /.test(this.listError)
+        ? `${this.listError}. Install agent-account from terminal-tools to manage accounts.` : `${this.listError}.`));
     } else if (!this.groups) {
       rows.push(div().px(6).text_size(11).text_color(t.dim).child("Reading…"));
     } else {

@@ -13,6 +13,16 @@ const isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v)
 
 export const firstLine = (s) => (s ?? "").trim().split("\n", 1)[0];
 
+// Why a program did not run on a machine. exec rejects when the program can't
+// start ("cannot start gh: program not found"), but also when the machine is
+// unreachable or a folder is missing: only a missing program (or exit code
+// 127, the shell's "command not found") reads as "not installed".
+export function execError(program, where, e) {
+  const message = firstLine(String(e?.message ?? e ?? ""));
+  if (e?.code === 127 || /program not found|command not found|ENOENT/i.test(message)) return `${program} is not installed on ${where}`;
+  return `${program} could not run on ${where}: ${message || "no reason given"}`;
+}
+
 // `agent-account list --json` as one group per provider, always all three and
 // in PROVIDERS order, so an account can be added to a provider with none yet.
 // Each account: { id, label (the id when it has none), tag, email, plan,
