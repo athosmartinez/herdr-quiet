@@ -71,9 +71,13 @@ test("validId follows agent-account's rule", () => {
   }
 });
 
-test("addArgs builds the add command and checks the id", () => {
-  assert.deepEqual(addArgs("claude", "team", { label: "Team", tag: "work" }), { args: ["add", "claude", "team", "--label", "Team", "--tag", "work"] });
-  assert.deepEqual(addArgs("codex", " team ", { label: "  ", tag: "" }), { args: ["add", "codex", "team"] });
+test("addArgs builds the add command and a separate set for the label and tag", () => {
+  // The add carries no label or tag: on an id made in between, add would
+  // apply them to that account. The set runs only after a real create.
+  assert.deepEqual(addArgs("claude", "team", { label: "Team", tag: "work" }),
+    { args: ["add", "claude", "team"], set: ["set", "claude", "team", "--label", "Team", "--tag", "work"] });
+  assert.deepEqual(addArgs("claude", "team", { label: "", tag: "work" }), { args: ["add", "claude", "team"], set: ["set", "claude", "team", "--tag", "work"] });
+  assert.deepEqual(addArgs("codex", " team ", { label: "  ", tag: "" }), { args: ["add", "codex", "team"], set: null });
   assert.match(addArgs("claude", "Team", {}).error, /lowercase/);
   assert.match(addArgs("claude", "default", {}).error, /already exists/);
   assert.match(addArgs("nope", "team", {}).error, /provider/);
@@ -241,7 +245,9 @@ test("the built commands work with agent-account", { skip: !hasCli && "agent-acc
   const env = { ...process.env, AGENT_ACCOUNTS_HOME: home };
   const cli = (args) => execFileSync("agent-account", args, { env, encoding: "utf8" });
   try {
-    assert.equal(addedExisting(cli(addArgs("cursor", "team", { label: "Team", tag: "work" }).args)), false);
+    const built = addArgs("cursor", "team", { label: "Team", tag: "work" });
+    assert.equal(addedExisting(cli(built.args)), false);
+    cli(built.set);
     let cursor = parseAccounts(cli(["list", "--json"]))[2];
     const team = cursor.accounts.find((a) => a.id === "team");
     assert.deepEqual([team.label, team.tag, team.state], ["Team", "work", "out"]);

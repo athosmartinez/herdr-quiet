@@ -64,19 +64,17 @@ export function validId(id) {
   return /^[a-z0-9][a-z0-9._-]{0,31}$/.test(id ?? "");
 }
 
-// `agent-account add <provider> <id> [--label ..] [--tag ..]`: { args } or
-// { error } for the form. Blank label and tag are left out.
+// `agent-account add <provider> <id>`, and the `set` that gives it the label
+// and tag (null when both are blank): { args, set } or { error } for the form.
+// The add has no --label or --tag: on an id that exists, add keeps that
+// account and would change its label and tag, so the set runs only after the
+// add's output says the account was created (addedExisting false).
 export function addArgs(provider, id, { label, tag } = {}) {
   if (!isProvider(provider)) return { error: `unknown provider "${provider}"` };
   const name = (id ?? "").trim();
   if (name === "default") return { error: "default already exists: it is the normal home" };
   if (!validId(name)) return { error: "Id: lowercase letters, digits, \".\", \"_\" and \"-\", at most 32" };
-  const args = ["add", provider, name];
-  const l = (label ?? "").trim();
-  const t = (tag ?? "").trim();
-  if (l) args.push("--label", l);
-  if (t) args.push("--tag", t);
-  return { args };
+  return { args: ["add", provider, name], set: setArgs(provider, { id: name, label: "", tag: "" }, { label, tag }) };
 }
 
 // `agent-account set <provider> <id> --label .. --tag ..` with only the fields

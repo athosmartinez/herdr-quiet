@@ -205,10 +205,10 @@ export default class QuietAccounts extends View {
     });
   }
 
-  // `agent-account add` on an id that exists doesn't fail: it would set that
-  // account's label and tag. So the list is read again first (no add when it
-  // can't be read), and the add's own output is checked too (an account made
-  // in between).
+  // `agent-account add` on an id that exists doesn't fail: it keeps that
+  // account. So the list is read again first (no add when it can't be read),
+  // the add's own output is checked too (an account made in between), and the
+  // label and tag go in a `set` only after a real create.
   add(f, cx) {
     const built = addArgs(f.provider.key, this.value("id"), { label: this.value("label"), tag: this.value("tag") });
     if (built.error) return this.fail(built.error, cx);
@@ -224,7 +224,12 @@ export default class QuietAccounts extends View {
       if (r.code !== 0) return this.fail(firstLine(r.stderr) || `agent-account exited with ${r.code}`, cx);
       if (addedExisting(r.stdout)) {
         this.readAccounts(cx);
-        return this.fail(`${id} already existed: agent-account kept it and set the label and tag given`, cx);
+        return this.fail(`${id} already existed: agent-account kept it as it was. Pick another id, or Edit that account`, cx);
+      }
+      const s = built.set ? await this.cli(built.set) : { code: 0 };
+      if (s.code !== 0) {
+        this.readAccounts(cx);
+        return this.fail(`${id} created, but its label and tag were not set: ${firstLine(s.stderr) || `agent-account exited with ${s.code}`}. Use Edit`, cx);
       }
       this.busy = false;
       this.closeForm(cx);
