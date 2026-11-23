@@ -174,6 +174,15 @@ test("one account with an unknown id: the newest reading", () => {
   assert.equal(x.reading.windows[0].used, 7);
 });
 
+test("managed: agent-account listed the provider, also with one account", () => {
+  const one = { claude: { active: "default", accounts: [{ name: "default", email: null, logged_in: true }] } };
+  const c = providerState(parseRead(`accounts\t${JSON.stringify(one)}\nclaude\tdefault\t${claudeFile(10, 20)}`, NOW), "claude");
+  assert.deepEqual([c.managed, c.accounts.length, c.label], [true, 0, null]);
+  assert.equal(providerState(parseRead(`accounts\t${JSON.stringify(LIST)}`, NOW), "claude").managed, true);
+  // Without agent-account there is nothing to manage.
+  assert.equal(providerState(parseRead(`claude\tdefault\t${claudeFile(10, 20)}`, NOW), "claude").managed, false);
+});
+
 test("Codex: the newest event per account wins, not the first file", () => {
   const list = { codex: { active: "default", accounts: [
     { name: "default", email: null, logged_in: true, account_id: "a1" },

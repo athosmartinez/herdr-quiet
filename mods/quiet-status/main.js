@@ -256,6 +256,10 @@ export default class QuietStatus extends View {
       rows.push(v_flex().children(s.accounts.map((a) => this.account(t, provider, a, now))));
       rows.push(div().text_size(11).text_color(t.dim).child("Click an account to use it in new sessions."));
       rows.push(this.manage(t));
+    } else if (s.managed) {
+      // One account: no list to switch, but the panel can add another.
+      rows.push(section("Accounts"));
+      rows.push(this.manage(t));
     }
     const what = provider.limits ? `${provider.name} usage limits` : `${provider.name} accounts`;
     const title = s.label ? `${what} · ${s.label}` : what;
