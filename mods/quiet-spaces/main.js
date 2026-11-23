@@ -153,8 +153,10 @@ const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b
 export function statusGlyph(t, status) {
   const cell = (el) => h_flex().w(16).h(16).flex_none().items_center().justify_center().child(el);
   if (status === "working") return cell(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900));
-  if (status === "blocked") return cell(div().size(14).rounded(7).bg(t.blocked + "26").text_size(10.5).font_bold()
-    .text_color(t.blocked).flex().items_center().justify_center().loop("opacity", { from: 0.55, to: 1, period: 1600 }).child("?"));
+  // Only the round fill pulses; the "?" stays solid, so it stays readable.
+  if (status === "blocked") return cell(div().relative().size(14).flex().items_center().justify_center()
+    .child(div().absolute().left(0).top(0).size(14).rounded(7).bg(t.blocked + "33").loop("opacity", { from: 0.35, to: 1, period: 1600 }))
+    .child(div().text_size(10.5).font_bold().text_color(t.blocked).child("?")));
   if (status === "done") return cell(svg("mods/workspace-chrome/check.svg").size(13).text_color(t.done));
   if (status === "idle") return cell(div().size(7).rounded(4).border(1.5).border_color(t.idle ?? t.dim));
   return cell(div());

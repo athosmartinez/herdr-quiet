@@ -43,7 +43,7 @@ export function hover(id, trigger, content) {
 // Hierarchy comes from weight and color (foreground > muted > dim), not size.
 
 function card(t, width = WIDTH) {
-  return v_flex().w(width).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_lg()
+  return v_flex().w(width).p(10).gap(6).bg(t.popover).border_1().border_color(t.border).rounded(8).shadow_sm()
     .text_size(12).text_color(t.foreground);
 }
 
@@ -57,10 +57,11 @@ function heading(t, iconPath, text, color, idText) {
 
 // A label and its value on one line: the label muted at 11.5, the value
 // foreground at 12, or a status color where the value is a state.
-function fact(t, label, value, color) {
+// `middle`: cut a long value in the middle, so a path keeps its last part.
+function fact(t, label, value, color, middle = false) {
   return h_flex().gap(8).items_center().min_w(0)
     .child(div().w(80).flex_none().text_size(11.5).text_color(t.muted).child(label))
-    .child(div().flex_1().min_w(0).truncate().text_color(color ?? t.foreground).child(value));
+    .child(div().flex_1().min_w(0).truncate().when(middle, (el) => el.text_ellipsis_middle()).text_color(color ?? t.foreground).child(value));
 }
 
 // A group inside a card, set apart from the facts above it.
@@ -83,7 +84,7 @@ function button(t, id, label, onClick) {
 
 // A small mono chip for a model ("opus·high") or a ref ("origin/main"):
 // visible on the popover in both themes because it sits on `selected`.
-export function chip(t, text, maxW) {
+export function chip(t, text, maxW = 80) {
   return div().flex_none().h(16).px(5).rounded(4).bg(t.selected).font_family("JetBrains Mono").text_size(10.5)
     .text_color(t.muted).flex().items_center().when(Boolean(maxW), (el) => el.max_w(maxW).truncate()).child(text);
 }
@@ -150,18 +151,18 @@ export function prCard(t, id, pr, look, iconPath, agentReviews = []) {
     .when(asked.length > 0, (el) => el.child(fact(t, "Asked", asked.join(", "))))
     .when(pr.state === "OPEN", (el) => el.child(fact(t, "Merge", merge[0], merge[1])))
     // Agent reviewers (labels on their terminals); click one to show it.
+    // Many reviewers scroll past 168px, like the other long lists.
     .when(agentReviews.length > 0, (el) => el.child(section(t, "Agent reviews")
-      .children(agentReviews.map((r, i) => {
+      .child(scrollList(`${id}-reviews`, agentReviews.map((r, i) => {
         const v = verdictLook(t, r);
-        // mx(-6): the hover fill reaches past the text, and the text lines up with the card.
-        return h_flex().id(`${id}-rev${i}`).mx(-6).gap(6).px(6).py(3).rounded(5).items_center().min_w(0).cursor_pointer().hover((s) => s.bg(t.hover))
+        return h_flex().id(`${id}-rev${i}`).gap(6).px(6).py(3).rounded(5).items_center().min_w(0).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => { cx.stop_propagation(); run("agent.focus", { terminal: r.address }); })
           .child(div().flex_1().min_w(0).truncate().font_medium().child(r.name))
           .when(Boolean(r.model), (row) => row.child(chip(t, modelText(r.model))))
           // The count is already in the word: "✗ 4 issues", not "✗4 4 issues".
           .child(div().flex_none().text_size(11).font_medium().text_color(v.color).child(`${v.mark.replace(/\d+$/, "")} ${v.word}`));
-      }))))
+      }), agentReviews.length * 28, 168))))
     .when(Boolean(pr.url), (el) => el.child(actions(
       button(t, `${id}-open`, "Open on GitHub", () => openUrl(pr.url)),
       button(t, `${id}-copy`, "Copy URL", (cx) => cx.write_to_clipboard(pr.url)),
@@ -205,7 +206,7 @@ function tree(t, id, history) {
       .child(hashButton(h, i))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(h.subject))
       // Refs after the subject, so subjects line up.
-      .children(h.refs.slice(0, 2).map((r) => chip(t, r, 110)))
+      .children(h.refs.slice(0, 2).map((r) => chip(t, r, 72)))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(h.at * 1000))))));
 }
 
@@ -227,7 +228,7 @@ export function diffCard(t, id, g, iconPath, spaceId, active) {
     .child(heading(t, iconPath, `${d.count} file${d.count === 1 ? "" : "s"} changed`))
     .child(div().text_size(11).text_color(t.dim).child(against))
     .children((d.files ?? []).map((f) => h_flex().gap(8).items_center().min_w(0)
-      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(f.path))
+      .child(div().flex_1().min_w(0).truncate().text_ellipsis_middle().text_color(t.foreground).child(f.path))
       .child(div().flex_none().text_color(t.done).child(f.add == null ? "bin" : `+${f.add}`))
       .when(f.del != null, (r) => r.child(div().flex_none().text_color(t.ansi1).child(`−${f.del}`)))))
     .when(d.count > (d.files ?? []).length, (el) => el.child(div().text_size(11).text_color(t.dim).child(`and ${d.count - d.files.length} more`)))
@@ -334,7 +335,7 @@ export function trackerCard(t, id, tr, iconPath) {
 export function spaceCard(t, id, s, info) {
   return card(t)
     .child(heading(t, null, s.name))
-    .child(fact(t, "Folder", info.folder || "~"))
+    .child(fact(t, "Folder", info.folder || "~", undefined, true))
     .child(fact(t, "Machine", s.machine ?? "This computer"))
     .child(fact(t, "Tabs", String(s.tabs?.length ?? 0)))
     .child(fact(t, "Agents", String(info.agents)))
