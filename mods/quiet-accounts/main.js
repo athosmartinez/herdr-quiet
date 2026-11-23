@@ -25,7 +25,9 @@ export default class QuietAccounts extends View {
     this.machine = props()?.machine ?? spaces().find((s) => s.active)?.machine ?? "";
     this.groups = null; // parseAccounts(...)
     this.listError = null;
-    this.listSeq = 0; // the newest readAccounts
+    this.listSeq = 0; // the newest readAccounts; ghSeq and configSeq likewise
+    this.ghSeq = 0;
+    this.configSeq = 0;
     this.gh = null; // [{ host, login, active, ok }]
     this.ghError = null;
     this.config = { text: null, ok: true, map: {} }; // quiet.json and its gh_accounts
@@ -73,6 +75,7 @@ export default class QuietAccounts extends View {
   // plain form drops `--no-refresh` only when gh rejects that flag too. A
   // failed query shows gh's error, never "no account".
   readGh(cx) {
+    const seq = ++this.ghSeq;
     cx.spawn(async (cx) => {
       const gh = (args) => exec("gh", ["auth", "status", ...args], { on: this.on, timeout: 15000 });
       let res;
@@ -90,6 +93,7 @@ export default class QuietAccounts extends View {
       } catch (e) {
         res = { error: execError("gh", this.where, e) };
       }
+      if (seq !== this.ghSeq) return;
       this.gh = res.list ?? null;
       this.ghError = res.error ?? null;
       cx.notify();
@@ -97,15 +101,20 @@ export default class QuietAccounts extends View {
   }
 
   // A file that can't be read (permission, over 1 MiB) is an error like a
-  // broken one: the panel shows it and doesn't write.
+  // broken one: the panel shows it and doesn't write. Like readAccounts, only
+  // the newest read is kept, so an older one can't bring back an old map.
   readConfig(cx) {
+    const seq = ++this.configSeq;
     cx.spawn(async (cx) => {
+      let config;
       try {
         const text = await readTextFile(this.configPath);
-        this.config = { text, ...readGhAccounts(text) };
+        config = { text, ...readGhAccounts(text) };
       } catch (e) {
-        this.config = { text: null, ok: false, error: configError("read", e) };
+        config = { text: null, ok: false, error: configError("read", e) };
       }
+      if (seq !== this.configSeq) return;
+      this.config = config;
       cx.notify();
     });
   }
@@ -282,7 +291,9 @@ export default class QuietAccounts extends View {
         return fail(`${configError("written", e)}. It is read again: try once more.`, cx);
       }
       // The file now holds `next`: a second change before readConfig ends
-      // compares against it, not the old text.
+      // compares against it, not the old text, and a read started before the
+      // write is dropped.
+      this.configSeq++;
       this.config = { text: next, ...readGhAccounts(next) };
       this.busy = false;
       if (mine()) this.closeForm(cx);
