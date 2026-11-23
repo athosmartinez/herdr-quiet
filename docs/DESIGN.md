@@ -24,12 +24,13 @@ Os arquivos de tema aceitam só `#rrggbb`. Por isso, cada alpha do t3code já ve
 | surface / popover / raised | `#111111` / `#141414` / `#171717` | `#ffffff` | painéis e menus |
 | hover / selected | `#1d1d1d` / `#242424` | `#f4f4f5` / `#ececef` | linhas da sidebar |
 | border / input | `#1e1e1e` / `#252525` | `#e4e4e7` / `#d4d4d8` | linhas finas |
-| foreground / muted / dim | `#f5f5f5` / `#a3a3a3` / `#737373` | `#18181b` / `#71717a` / `#a1a1aa` | texto |
-| accent (= solid) | `#346bf1` | `#1b4ed8` | foco, seleção, botão |
+| foreground / muted / dim | `#f5f5f5` / `#a3a3a3` / `#8b8b8b` | `#18181b` / `#52525b` / `#696973` | texto |
+| accent / accent_foreground | `#608bfa` / `#050505` | `#1b4ed8` / `#ffffff` | foco, seleção, texto pequeno (`merged`) |
+| solid / solid_foreground | `#346bf1` / `#ffffff` | `#1b4ed8` / `#ffffff` | botão |
 | selection | `#13244c` | `#dbe4ff` | seleção no terminal |
 | cursor | `#b4cbff` | `#3f3f46` | cursor |
 
-Contraste medido: texto sobre fundo 18,7:1 (escuro) e 17,7:1 (claro); muted sobre chrome 7,8:1 e 4,6:1; acento como anel de foco ≥ 4,3:1. O `dim` serve só para texto de apoio que não carrega informação.
+Contraste medido: texto sobre fundo 18,7:1 (escuro) e 17,7:1 (claro); muted sobre chrome 7,8:1 e 7,4:1; dim sobre selected 4,56:1 e 4,60:1; acento sobre o fundo 6,4:1 e 6,7:1. O `dim` serve só para texto de apoio que não carrega informação.
 
 ANSI: os 16 tons usam os 400/300 do Tailwind no escuro e os 600/700 no claro. Cada cor fica ≥ 4,8:1 sobre o fundo do terminal.
 

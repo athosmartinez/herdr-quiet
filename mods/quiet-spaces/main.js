@@ -7,6 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, readTextFile, appHome } from "herdr";
+import { letterColor } from "./contrast.js";
 import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, verdictChip, trackerCard, clean, kidStatus } from "./cards.js";
 
 // Live sub-agents per space: each live terminal with a parent is walked up to
@@ -948,7 +949,7 @@ export default class Spaces extends View {
           .items_center()
           // Herdr's own identity: the space's colored letter, or the worktree mark.
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color(letterColor(fill)).child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(hover(`space-card-${w.id}`, div().min_w(0).truncate().text_color(on ? t.foreground : t.muted).when(on, (n) => n.font_medium()).child(w.name),
             spaceCard(t, `space-card-${w.id}`, w, this.spaceInfo(w))).flex_initial().min_w(SIDE_MIN))
           .child(g ? this.repoTail(g, tree, w.name, t) : div().flex_1())
@@ -1026,7 +1027,7 @@ export default class Spaces extends View {
       .when(needs.length > 0 && !collapsed, (el) => {
         const next = needs[(this.needsAt ?? 0) % needs.length];
         return el.child(div().px(8).pb(4).child(hover("needs-card",
-          h_flex().id("needs-row").h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.blocked)
+          h_flex().id("needs-row").h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.foreground)
             .cursor_pointer().hover((s) => s.bg(t.blocked + "33"))
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => {

@@ -183,7 +183,7 @@ export default class Agents extends View {
       .w_full()
       .p(5)
       .bg(t.popover)
-      .text_size(12.8)
+      .text_size(13)
       .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
       .children(SORTS.map((s) => h_flex()
         .id(`sort-${s.id}`)
@@ -227,22 +227,28 @@ export default class Agents extends View {
     return h_flex()
       .id(`sub-${k.address}`)
       .pl(39)
-      .pr(8)
+      .pr(10)
       .rounded(8)
       .h(26)
       .flex_none()
       .gap(0)
       .items_center()
-      .text_size(12.5)
+      .text_size(13)
       // One selection style for agents and sub-agents; hover only on rows that aren't selected.
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       // Tree lines, drawn as the shipped mod draws them (the shape that renders
       // reliably here), in `dim` at 1px so they read on `chrome`.
-      .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
-        .when(Boolean(l), el => el.border_l(1).border_color(t.dim))
-        .when(l === "└" || l === "├", el => el.border_b(1).rounded_bl(6))))
+      // A row is 26px: "│" and "├" run the full height so the line under them
+      // joins the next row; "├" stacks its 17px elbow over a 9px continuation.
+      .children(s.lines.map(l => l === "├"
+        ? v_flex().self_start().mt(-4).w(9).h(26).mr(4).flex_none()
+          .child(div().w(9).h(17).flex_none().border_l(1).border_b(1).rounded_bl(6).border_color(t.dim))
+          .child(div().w(9).h(9).flex_none().border_l(1).border_color(t.dim))
+        : div().self_start().mt(-4).w(9).h(l === "│" ? 26 : 17).mr(4).flex_none()
+          .when(Boolean(l), el => el.border_l(1).border_color(t.dim))
+          .when(l === "└", el => el.border_b(1).rounded_bl(6))))
       .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
       .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
       .when(Boolean(modelOf(k.argv)), el => el.child(div().mr(6).child(chip(t, modelOf(k.argv)))))
@@ -349,7 +355,8 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
-          .hover((s) => s.bg(t.hover))
+          .when(a.focused, (el) => el.bg(t.selected))
+          .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(16).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -380,7 +387,7 @@ export default class Agents extends View {
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex()
         .id(`ag-${a.address}`)
-        .px(8)
+        .px(10)
         .h(30)
         .flex_none()
         .rounded(8)
