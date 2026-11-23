@@ -281,6 +281,19 @@ export function needsCard(t, id, list, statusGlyph, next) {
       .child(div().pl(22).text_size(11).text_color(t.muted).truncate().child(a.ask ?? "Reading its screen…")))));
 }
 
+// A tracker task: its key, and its title and status when the configured
+// command gave them. Open goes to its page; Copy key copies "ABC-123".
+export function trackerCard(t, id, tr, iconPath) {
+  return card(t)
+    .child(heading(t, iconPath, tr.about?.title ? `${tr.key} ${tr.about.title}` : tr.key))
+    .when(Boolean(tr.about?.status), (el) => el.child(fact(t, "Status", tr.about.status, t.foreground)))
+    .when(!tr.about, (el) => el.child(div().text_size(11).text_color(t.dim).child("Set a tracker command in quiet.json to see its title and status.")))
+    .child(actions(
+      tr.url ? button(t, `${id}-open`, "Open task", () => openUrl(tr.url)) : null,
+      button(t, `${id}-copy`, "Copy key", (cx) => cx.write_to_clipboard(tr.key)),
+    ));
+}
+
 export function spaceCard(t, id, s, info) {
   return card(t)
     .child(heading(t, null, s.name))

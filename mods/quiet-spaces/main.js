@@ -7,7 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, readTextFile, appHome } from "herdr";
-import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, verdictChip, clean, kidStatus } from "./cards.js";
+import { hover, prCard, branchCard, diffCard, subsCard, statusCard, spaceCard, machineCard, needsCard, verdictChip, trackerCard, clean, kidStatus } from "./cards.js";
 
 // Live sub-agents per space: each live terminal with a parent is walked up to
 // its first ancestor that is an agent in a space (the same `parent` links the
@@ -33,6 +33,20 @@ export function screenTail(text, max = 12) {
   const lines = String(text ?? "").split("\n").map((l) => l.replace(/\s+$/, ""))
     .filter((l) => l.trim() && !/^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╯╰═║╔╗╚╝╟╢╌╍┄┅┈┉·.\-_=|+]+$/.test(l));
   return lines.slice(-max).map((l) => (l.length > 160 ? `${l.slice(0, 159)}…` : l));
+}
+
+// A tracker task looked up by `command` is cached this long.
+const TRACKER_TTL = 300000;
+
+// The task key in a branch name, upper case, for a pattern from config
+// ("abc-\\d+" finds "ABC-123" in "feat/abc-123-login"). Only keys shaped like
+// ABC-123 pass, so a key is always safe as one argv element.
+export function trackerKey(branch, pattern) {
+  if (typeof branch !== "string" || typeof pattern !== "string" || !pattern) return null;
+  let m = null;
+  try { m = branch.match(new RegExp(pattern, "i")); } catch { return null; }
+  const key = m?.[0]?.toUpperCase() ?? null;
+  return key && /^[A-Z][A-Z0-9]+-\d+$/.test(key) ? key : null;
 }
 
 // A plain object from config, or {}.
@@ -399,6 +413,8 @@ export default class Spaces extends View {
       info.owner = needsOwner ? await this.ownerOf(on, cwd) : null;
       const pr = branch.code === 0 ? await this.lookPr(key, info.branch, on, cwd, info.owner) : null;
       info.pr = pr;
+      // Opt-in tracker chip: the task key in the branch name, for this owner's tracker.
+      info.tracker = await this.trackerOf(info.owner, info.branch);
       // For the branch card: the last commit, the upstream's name and how many
       // files are not committed. Failures leave the field out of the card.
       // Two at a time, as above: AT_ONCE places x 2 runs stays under a machine
@@ -491,6 +507,36 @@ export default class Spaces extends View {
       const r = await exec("git", ["remote", "get-url", "origin"], { cwd, on, timeout: 5000 });
       return r.code === 0 ? r.stdout.trim().match(/github\.com[:/]([^/]+)\//i)?.[1] ?? null : null;
     } catch { return null; }
+  }
+
+  // The tracker task of a branch, from `trackers` in quiet.json, picked by the
+  // repo's GitHub owner (else "*"): { pattern, url, command? }. `pattern` finds
+  // the key in the branch name ("abc-\\d+"), `url` opens it ("{KEY}" is
+  // replaced), and the optional `command` (argv, no shell) prints JSON
+  // { title, status } for the key, cached TRACKER_TTL. The window's own
+  // machine runs it: its login is there. Null when nothing matches.
+  async trackerOf(owner, branch) {
+    const trackers = objectOf(this.config?.trackers);
+    const tr = objectOf((owner && (trackers[owner] ?? trackers[owner.toLowerCase()])) ?? trackers["*"]);
+    const key = trackerKey(branch, tr.pattern);
+    if (!key) return null;
+    const url = typeof tr.url === "string" && /^https?:\/\//.test(tr.url) ? tr.url.split("{KEY}").join(key) : null;
+    let about = null;
+    if (Array.isArray(tr.command) && tr.command.length && tr.command.every((a) => typeof a === "string")) {
+      this.tracked ??= {};
+      const hit = this.tracked[key];
+      if (hit && Date.now() - hit.at < TRACKER_TTL) about = hit.about;
+      else {
+        try {
+          const argv = tr.command.map((a) => a.split("{KEY}").join(key));
+          const r = await exec(argv[0], argv.slice(1), { timeout: 15000 });
+          const j = r.code === 0 ? JSON.parse(r.stdout) : null;
+          if (j && typeof j === "object") about = { title: typeof j.title === "string" ? j.title : null, status: typeof j.status === "string" ? j.status : null };
+        } catch {}
+        this.tracked[key] = { at: Date.now(), about };
+      }
+    }
+    return { key, url, about };
   }
 
   // The gh account for this repo's GitHub owner, from `gh_accounts`:
@@ -805,6 +851,10 @@ export default class Spaces extends View {
       .child(div().min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"));
     return h_flex().gap(10).items_center().text_size(11.5).text_color(t.dim).min_w(0)
       .child(hover(`branch-card-${w.id}`, branch, branchCard(t, `branch-card-${w.id}`, g, ICON("git-branch"))).flex_initial().min_w(0))
+      // Opt-in tracker chip: the task key from the branch name; its card says more.
+      .when(Boolean(g.tracker), (el) => el.child(hover(`tracker-card-${w.id}`, part()
+        .child(icon("ticket", t.dim))
+        .child(div().text_color(t.muted).child(g.tracker.key)), trackerCard(t, `tracker-card-${w.id}`, g.tracker, ICON("ticket"))).flex_none()))
       // Opt-in gate shield: green only when the stamp passed for HEAD and HEAD is pushed.
       .when(Boolean(g.gate) && (g.gate.stamped || pr?.state === "OPEN"), (el) => {
         const gt = g.gate;
