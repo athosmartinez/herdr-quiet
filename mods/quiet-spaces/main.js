@@ -117,9 +117,9 @@ function place(s, ps) {
 // request and the diff, only when there is one of them.
 const hasDiff = (g) => Boolean(g?.diff && (g.diff.add || g.diff.del));
 const hasLine3 = (g) => Boolean(g?.pr) || hasDiff(g);
-// Each height leaves 8px or more above and below the lines, so nothing touches the
-// selected row's edge.
-const rowHeight = ({ g }) => (!g ? 32 : hasLine3(g) ? 72 : 52);
+// How many lines a row has (1 to 3). Its height follows from them and the padding;
+// a change here moves the rows below, so the active row is brought back into view.
+const rowLines = ({ g }) => (!g ? 1 : hasLine3(g) ? 3 : 2);
 // Icons drawn before each value on line 2, from this mod's own folder.
 const ICON = (name) => `mods/quiet-spaces/icons/${name}.svg`;
 // A pull request is looked up again at most this often for the same branch.
@@ -647,7 +647,7 @@ export default class Spaces extends View {
     const rows = this.ordered();
     const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
     // The rows' heights: a row growing a git line above the active one moves it down.
-    this.heights = collapsed ? "" : rows.map((r) => rowHeight(r)).join(",");
+    this.heights = collapsed ? "" : rows.map((r) => rowLines(r)).join(",");
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
@@ -905,11 +905,10 @@ export default class Spaces extends View {
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
-      .px(10)
+      // The same 10px on all four sides; the row is as tall as its lines.
+      .p(10)
       .gap(4)
-      .h(rowHeight({ g }))
       .flex_none()
-      .justify_center()
       .rounded(8)
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
