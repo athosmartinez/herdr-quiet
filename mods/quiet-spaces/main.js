@@ -644,6 +644,8 @@ export default class Spaces extends View {
   grouped(t, collapsed) {
     const rows = this.ordered();
     const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+    // The rows' heights: a row growing a git line above the active one moves it down.
+    this.heights = collapsed ? "" : rows.map((r) => rowHeight(r)).join(",");
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
@@ -1003,11 +1005,12 @@ export default class Spaces extends View {
     this.subs = subAgents(all, this.agentList);
     const needs = this.needsYou(all);
     const list = this.grouped(t, collapsed);
-    // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
+    // Bring the active space into view when it, its place in the list or the rows' heights change; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;
-    if (active !== this.revealed || this.activeAt !== this.revealedAt) {
+    if (active !== this.revealed || this.activeAt !== this.revealedAt || this.heights !== this.revealedHeights) {
       this.revealed = active;
       this.revealedAt = this.activeAt;
+      this.revealedHeights = this.heights;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
