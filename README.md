@@ -13,7 +13,7 @@ Ask your Herdr agent to add `github.com/athosmartinez/herdr-quiet`, or copy by h
 ```sh
 cp layouts/quiet.json ~/.config/herdr-app/layouts/
 cp themes/quiet-*.json ~/.config/herdr-app/themes/
-cp -R mods/quiet-spaces ~/.config/herdr-app/mods/
+cp -R mods/quiet-spaces mods/quiet-agents ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/quiet-spaces
 herdr-app do layout.switch --name quiet
 ```
@@ -69,7 +69,7 @@ If `mods/quiet-spaces` is a symlink into a clone, Herdr may not notice edits mad
 
 ## Credits
 
-`mods/quiet-spaces` is a fork of the `spaces` mod that ships with Herdr (Apache-2.0). The look borrows from t3code and Orca.
+`mods/quiet-spaces` and `mods/quiet-agents` are forks of the `spaces` and `agents` mods that ship with Herdr (Apache-2.0). The look borrows from t3code and Orca.
 
 ## License
 

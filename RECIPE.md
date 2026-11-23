@@ -14,7 +14,7 @@ Left to right, the same regions as Herdr (main):
     - line 1: Herdr's 18px colored letter (radius 5, 10.5px bold white; a worktree shows the 13px branch mark instead, indented 22px), 9px gap, the space name (13px, `foreground` when active, `muted` otherwise), then on the right the repo name when the space name doesn't say it and `↑n ↓n` (11.5px), a 13px bot icon with the number of live sub-agents (only when there are some), and last the 16px status cell;
     - line 2, 11.5px, starting under the name, a 13px icon before each value, 10px between groups: branch icon + branch (`muted`, gives way first), PR icon + `#124` + the PR word in the PR's color + `→ base`, diff icon + `+n` (`done`) `−n` (`ansi1`);
     - a space without git is a single 30px line;
-  - **Agents**: Herdr's shipped `agents` list, unchanged;
+  - **Agents** (`quiet-agents`): a fork of Herdr's `agents` list with the same status glyphs as the spaces rows, a model chip per agent, the spaces list's header and group heights, one selection style, an 18px icon cell, and pin and age in one 28px slot;
   - the shipped footer (69px).
 - **Work area**: the shipped tab bar (42px), then the panes with 8px gaps, an 8px radius, a 1px `border` frame and a 1px `accent` frame on the focused pane; terminal padding 14×12px. The Files/Changes side panel and the 28px status bar are the shipped ones.
 
