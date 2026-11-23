@@ -44,6 +44,16 @@ Palette (`themes/quiet-dark.json`, `themes/quiet-light.json`), dark / light:
 
 The 16 ANSI colors are Tailwind 400/300 shades in dark and 600/700 in light, each at least 4.8:1 on the terminal background.
 
+## Design rules
+
+Keep these values when you change a mod:
+
+- **Spacing**: 2 / 4 / 6 / 8 / 10 / 16px; 9px between an icon cell and its name. Rows of the spaces and agents lists have 10px side padding, so their names start at the same x.
+- **Type**: 13 / 12 / 11.5 / 11 / 10.5px. No other sizes.
+- **Weight**: 400 for values, 500 for the selection and labels, 600 for titles, 700 for avatar initials.
+- **Radius**: 8 for rows and cards, 5 for avatars and buttons, 4 for chips.
+- **Contrast**: text is at least 4.5:1 on its background, also on `selected` and `hover` (so `dim` on `selected`, the dark `accent` as 11.5px text, and the avatar letters on the mark colors). Status colors keep to icons and short words; text on a status tint uses `foreground`.
+
 ## How it behaves
 
 Space status (the most urgent agent in the space), drawn in the 16px cell at the right of line 1:
