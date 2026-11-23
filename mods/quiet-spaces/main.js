@@ -117,7 +117,9 @@ function place(s, ps) {
 // request and the diff, only when there is one of them.
 const hasDiff = (g) => Boolean(g?.diff && (g.diff.add || g.diff.del));
 const hasLine3 = (g) => Boolean(g?.pr) || hasDiff(g);
-const rowHeight = ({ g }) => (!g ? 30 : hasLine3(g) ? 62 : 46);
+// Each height leaves 8px or more above and below the lines, so nothing touches the
+// selected row's edge.
+const rowHeight = ({ g }) => (!g ? 32 : hasLine3(g) ? 72 : 52);
 // Icons drawn before each value on line 2, from this mod's own folder.
 const ICON = (name) => `mods/quiet-spaces/icons/${name}.svg`;
 // A pull request is looked up again at most this often for the same branch.
@@ -888,7 +890,7 @@ export default class Spaces extends View {
         .child(icon("file-diff", t.dim))
         .child(div().text_color(t.done).child(`+${diff.add}`))
         .child(div().text_color(t.ansi1).child(`\u2212${diff.del}`)), diffCard(t, `diff-card-${w.id}`, g, ICON("file-diff"), w.id, w.active)).flex_none()));
-    return v_flex().gap(3).min_w(0).child(line2).child(line3);
+    return v_flex().gap(4).min_w(0).child(line2).child(line3);
   }
 
   row({ w, i, g, tree }, t) {
@@ -903,8 +905,8 @@ export default class Spaces extends View {
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
-      .px(8)
-      .gap(3)
+      .px(10)
+      .gap(4)
       .h(rowHeight({ g }))
       .flex_none()
       .justify_center()
