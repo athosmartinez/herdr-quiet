@@ -9,7 +9,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
   parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, parseGhStatusText, readGhAccounts, writeGhAccounts, validGhName, firstLine,
+  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, writeGhAccounts, validGhName, firstLine,
 } from "./accounts.js";
 
 // A login runs in its own terminal: read again while the panel is open, so
@@ -67,22 +67,29 @@ export default class QuietAccounts extends View {
   }
 
   // `--json` and `--no-refresh` keep it read-only and token-free; an older gh
-  // without them prints text, and only the logins are taken from it.
+  // without `--json` prints text, and only the logins are taken from it. The
+  // plain form drops `--no-refresh` only when gh rejects that flag too. A
+  // failed query shows gh's error, never "no account".
   readGh(cx) {
     cx.spawn(async (cx) => {
+      const gh = (args) => exec("gh", ["auth", "status", ...args], { on: this.on, timeout: 15000 });
+      let res;
       try {
-        const r = await exec("gh", ["auth", "status", "--json", "hosts", "--no-refresh"], { on: this.on, timeout: 15000 });
-        let list = r.code === 0 ? parseGhStatus(r.stdout) : null;
-        if (!list && r.code !== 127) {
-          const t = await exec("gh", ["auth", "status"], { on: this.on, timeout: 15000 });
-          list = parseGhStatusText(`${t.stdout}\n${t.stderr}`);
+        const r = await gh(["--json", "hosts", "--no-refresh"]);
+        const list = r.code === 0 ? parseGhStatus(r.stdout) : null;
+        if (list) res = { list };
+        else if (r.code === 127) res = { error: this.missing("gh") };
+        else {
+          let t = await gh(["--no-refresh"]);
+          if (flagRejected(`${t.stdout}\n${t.stderr}`)) t = await gh([]);
+          res = ghStatusFromText(t.code, t.stdout, t.stderr);
+          if (res.error) res.error = `gh auth status failed on ${this.where}: ${res.error}`;
         }
-        this.gh = list;
-        this.ghError = list ? null : this.missing("gh");
       } catch {
-        this.gh = null;
-        this.ghError = this.missing("gh");
+        res = { error: this.missing("gh") };
       }
+      this.gh = res.list ?? null;
+      this.ghError = res.error ?? null;
       cx.notify();
     });
   }

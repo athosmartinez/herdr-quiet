@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, parseGhStatusText, readGhAccounts, writeGhAccounts, validGhName, firstLine,
+  parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, writeGhAccounts, validGhName, firstLine,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -127,6 +127,32 @@ test("parseGhStatusText reads the plain output of older gh", () => {
     { host: "github.com", login: "old-me", active: false, ok: false },
   ]);
   assert.deepEqual(parseGhStatusText("You are not logged into any GitHub hosts."), []);
+});
+
+test("parseGhStatusText reads gh before 2.40: \"as <login>\", one account per host", () => {
+  const text = [
+    "github.com",
+    "  ✓ Logged in to github.com as me (oauth_token)",
+    "  ✓ Git operations for github.com configured to use https protocol.",
+    "  ✓ Token: *******************",
+    "ghe.example.com",
+    "  X Failed to log in to ghe.example.com as corp-me (GH_TOKEN)",
+  ].join("\n");
+  assert.deepEqual(parseGhStatusText(text), [
+    { host: "github.com", login: "me", active: true, ok: true },
+    { host: "ghe.example.com", login: "corp-me", active: true, ok: false },
+  ]);
+});
+
+test("ghStatusFromText tells no account apart from a failed query", () => {
+  assert.deepEqual(ghStatusFromText(1, "", "You are not logged into any GitHub hosts. To log in, run: gh auth login"), { list: [] });
+  assert.deepEqual(ghStatusFromText(1, "", "error connecting to api.github.com\ncheck your internet connection"), { error: "error connecting to api.github.com" });
+  assert.deepEqual(ghStatusFromText(2, "", ""), { error: "gh exited with 2" });
+  // A failed login among others still lists the accounts.
+  assert.equal(ghStatusFromText(1, "github.com\n  X Failed to log in to github.com account me (keyring)\n  - Active account: true", "").list.length, 1);
+  assert.equal(flagRejected("unknown flag: --no-refresh"), true);
+  assert.equal(flagRejected("flag provided but not defined: -json"), true);
+  assert.equal(flagRejected("You are not logged into any GitHub hosts."), false);
 });
 
 test("readGhAccounts keeps only valid owner → login pairs", () => {

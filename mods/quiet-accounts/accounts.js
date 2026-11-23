@@ -105,19 +105,35 @@ export function parseGhStatus(stdout) {
 
 // The plain `gh auth status` of a gh without `--json`: "✓ Logged in to <host>
 // account <login> (...)" or "X Failed to log in to <host> account <login>",
-// then "- Active account: true|false".
+// then "- Active account: true|false". A gh older than 2.40 says "as <login>"
+// and has one account per host, so an entry without that line is active.
 export function parseGhStatusText(stdout) {
   const out = [];
   for (const line of (stdout ?? "").split("\n")) {
-    const m = line.match(/(Logged in|Failed to log in) to (\S+) account (\S+)/);
+    const m = line.match(/(Logged in|Failed to log in) to (\S+) (?:account|as) ([A-Za-z0-9-]+)/);
     if (m) {
-      out.push({ host: m[2], login: m[3], active: false, ok: m[1] === "Logged in" });
+      out.push({ host: m[2], login: m[3], active: null, ok: m[1] === "Logged in" });
       continue;
     }
     const act = line.match(/Active account:\s*(true|false)/);
     if (act && out.length) out[out.length - 1].active = act[1] === "true";
   }
-  return out.sort(byHost);
+  return out.map((a) => ({ ...a, active: a.active ?? true })).sort(byHost);
+}
+
+// gh refuses a flag it doesn't know (`--json`, `--no-refresh` on an old gh).
+export const flagRejected = (out) => /unknown (?:shorthand )?flag|flag provided but not defined/i.test(out ?? "");
+
+// The result of a plain `gh auth status` run: { list } or { error }. "Not
+// logged in" is an empty list; any other failure that names no login is the
+// error gh printed, so it never reads as "no accounts".
+export function ghStatusFromText(code, stdout, stderr) {
+  const all = `${stdout ?? ""}\n${stderr ?? ""}`;
+  const list = parseGhStatusText(all);
+  if (list.length) return { list };
+  if (/not logged in/i.test(all)) return { list: [] };
+  if (code === 0) return { list: [] };
+  return { error: firstLine(stderr) || firstLine(stdout) || `gh exited with ${code}` };
 }
 
 // The `gh_accounts` map of quiet.json ({ "<owner>": "<gh login>" }), only its
