@@ -1026,7 +1026,7 @@ export default class Spaces extends View {
       .when(needs.length > 0 && !collapsed, (el) => {
         const next = needs[(this.needsAt ?? 0) % needs.length];
         return el.child(div().px(8).pb(4).child(hover("needs-card",
-          h_flex().id("needs-row").h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.blocked)
+          h_flex().id("needs-row").h(28).px(8).gap(8).items_center().rounded(7).bg(t.blocked + "1f").text_size(12).text_color(t.foreground)
             .cursor_pointer().hover((s) => s.bg(t.blocked + "33"))
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => {
