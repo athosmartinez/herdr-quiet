@@ -349,7 +349,8 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
-          .hover((s) => s.bg(t.hover))
+          .when(a.focused, (el) => el.bg(t.selected))
+          .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(16).flex_none().items_center().justify_center().child(this.status(t, a, true)));
