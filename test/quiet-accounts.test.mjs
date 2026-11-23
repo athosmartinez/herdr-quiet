@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   PROVIDERS, parseAccounts, validId, addArgs, setArgs, useArgs, loginArgv, loginCommand,
   parseGhStatus, parseGhStatusText, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting,
-  validGhName, firstLine, execError,
+  validGhName, firstLine, execError, accountIds,
 } from "../mods/quiet-accounts/accounts.js";
 
 const LIST = {
@@ -54,6 +54,14 @@ test("parseAccounts treats a null login as unknown and survives bad input", () =
   assert.equal(parseAccounts("not json"), null);
   assert.equal(parseAccounts(""), null);
   assert.equal(parseAccounts("[]"), null);
+});
+
+test("accountIds lists one provider's ids, or null when the list can't be read", () => {
+  assert.deepEqual(accountIds(JSON.stringify(LIST), "claude"), ["default", "work", "spare"]);
+  assert.deepEqual(accountIds(JSON.stringify(LIST), "cursor"), ["default"]);
+  assert.equal(accountIds("not json", "claude"), null);
+  assert.equal(accountIds("", "claude"), null);
+  assert.equal(accountIds(JSON.stringify(LIST), "nope"), null);
 });
 
 test("validId follows agent-account's rule", () => {

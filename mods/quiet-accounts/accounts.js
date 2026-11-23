@@ -50,6 +50,12 @@ export function parseAccounts(stdout) {
   });
 }
 
+// The ids of one provider's accounts in `agent-account list --json`, or null
+// when the text is not a list: then an add can't tell if the id exists.
+export function accountIds(stdout, provider) {
+  return parseAccounts(stdout)?.find((g) => g.key === provider)?.accounts.map((a) => a.id) ?? null;
+}
+
 // agent-account's id rule: lowercase letters, digits, ".", "_" and "-",
 // starting with a letter or a digit, at most 32; "default" is the normal home,
 // "active" and "accounts.json" are registry files.

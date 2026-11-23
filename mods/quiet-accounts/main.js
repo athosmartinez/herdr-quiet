@@ -9,7 +9,7 @@ import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { spaces, theme, exec, run, notify, props, closeOverlay, readTextFile, writeTextFile, appHome, checking } from "herdr";
 import {
   parseAccounts, addArgs, setArgs, useArgs, loginArgv, loginCommand,
-  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError,
+  parseGhStatus, ghStatusFromText, flagRejected, readGhAccounts, editGhAccounts, addedExisting, validGhName, firstLine, execError, accountIds,
 } from "./accounts.js";
 
 // A login runs in its own terminal: read again while the panel is open, so
@@ -192,8 +192,9 @@ export default class QuietAccounts extends View {
   }
 
   // `agent-account add` on an id that exists doesn't fail: it would set that
-  // account's label and tag. So the list is read again first, and the add's
-  // own output is checked too (an account made in between).
+  // account's label and tag. So the list is read again first (no add when it
+  // can't be read), and the add's own output is checked too (an account made
+  // in between).
   add(f, cx) {
     const built = addArgs(f.provider.key, this.value("id"), { label: this.value("label"), tag: this.value("tag") });
     if (built.error) return this.fail(built.error, cx);
@@ -202,8 +203,9 @@ export default class QuietAccounts extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       const l = await this.cli(["list", "--json"]);
-      const group = l.code === 0 ? parseAccounts(l.stdout)?.find((g) => g.key === f.provider.key) : null;
-      if (group?.accounts.some((a) => a.id === id)) return this.fail(`${id} already exists: pick another id, or Edit that account`, cx);
+      const ids = l.code === 0 ? accountIds(l.stdout, f.provider.key) : null;
+      if (!ids) return this.fail(`Not created: the account list could not be read (${firstLine(l.stderr) || (l.code === 0 ? "no list" : `agent-account exited with ${l.code}`)})`, cx);
+      if (ids.includes(id)) return this.fail(`${id} already exists: pick another id, or Edit that account`, cx);
       const r = await this.cli(built.args);
       if (r.code !== 0) return this.fail(firstLine(r.stderr) || `agent-account exited with ${r.code}`, cx);
       if (addedExisting(r.stdout)) {
